@@ -64,7 +64,7 @@ if(ATLAS_BUILD_PROVIDER)
   add_subdirectory(src/provider)
   if(ATLAS_BUILD_TESTS)
     # Real-CNG tests: byte order of the ECDH secret and the server's sealed bundle through the CNG path.
-    add_executable(atlas_windows_tests tests/windows/ncrypt_ecdh_test.cpp tests/windows/provider_guid_test.cpp)
+    add_executable(atlas_windows_tests tests/windows/ncrypt_ecdh_test.cpp tests/windows/provider_guid_test.cpp tests/windows/sso_keys_test.cpp tests/windows/cli_pipe_test.cpp)
     target_link_libraries(atlas_windows_tests PRIVATE atlas_win GTest::gtest_main OpenSSL::Crypto)
     target_compile_definitions(atlas_windows_tests PRIVATE
       ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")

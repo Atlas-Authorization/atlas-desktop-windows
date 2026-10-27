@@ -14,7 +14,7 @@ const char kEntropy[] = "atlas-login-agent-v1";
 DATA_BLOB blobOf(const Bytes& b) { return {static_cast<DWORD>(b.size()), const_cast<BYTE*>(b.data())}; }
 }  // namespace
 
-DpapiStore::DpapiStore() : dir_(dataDir() + L"\\secrets") {}
+DpapiStore::DpapiStore(bool perUser) : dir_(perUser ? userDataDir() : dataDir() + L"\\secrets"), perUser_(perUser) {}
 
 std::wstring DpapiStore::pathFor(const std::string& name) const {
   std::string safe;
@@ -36,11 +36,11 @@ std::optional<Bytes> DpapiStore::get(const std::string& name) {
 }
 
 bool DpapiStore::put(const std::string& name, const Bytes& value) {
-  if (!ensureSecureDir(dataDir()) || !ensureSecureDir(dir_)) return false;
+  if (perUser_ ? !ensureUserDir(dir_) : (!ensureSecureDir(dataDir()) || !ensureSecureDir(dir_))) return false;
   DATA_BLOB in = blobOf(value), out{};
   Bytes entropy(kEntropy, kEntropy + sizeof kEntropy - 1);
   DATA_BLOB ent = blobOf(entropy);
-  if (!CryptProtectData(&in, L"atlas", &ent, nullptr, nullptr, CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN, &out))
+  if (!CryptProtectData(&in, L"atlas", &ent, nullptr, nullptr, (perUser_ ? 0 : CRYPTPROTECT_LOCAL_MACHINE) | CRYPTPROTECT_UI_FORBIDDEN, &out))
     return false;
   bool ok = writeFileAtomic(pathFor(name), Bytes(out.pbData, out.pbData + out.cbData));
   LocalFree(out.pbData);

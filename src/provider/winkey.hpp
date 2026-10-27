@@ -13,6 +13,9 @@
 namespace win {
 
 enum class KeyKind { Signing, Seal };
+// Machine keys serve the sign-in screen (SYSTEM). User keys belong to one Windows user and serve the SSO broker; they are
+// still CNG keys that never leave the device. `presence` adds a per-use Windows consent prompt (NCRYPT_UI_POLICY).
+enum class KeyScope { Machine, User };
 
 // NCryptDeriveKey(BCRYPT_KDF_RAW_SECRET) returns the shared secret in the byte order CNG uses internally
 // (little endian). The protocol (and OpenSSL) use the big-endian X coordinate. This is the ONE place that converts;
@@ -21,9 +24,10 @@ atlas::Bytes cngRawSecretToBigEndian(const atlas::Bytes& raw);
 
 class CngDeviceKey : public atlas::IDeviceKey, public atlas::ISealKey {
  public:
-  static std::unique_ptr<CngDeviceKey> open(const std::wstring& name);
+  static std::unique_ptr<CngDeviceKey> open(const std::wstring& name, KeyScope scope = KeyScope::Machine);
   // Replaces any key of that name. `hardware` reports whether the TPM provider holds it.
-  static std::unique_ptr<CngDeviceKey> create(const std::wstring& name, KeyKind kind, bool& hardware, std::string& err);
+  static std::unique_ptr<CngDeviceKey> create(const std::wstring& name, KeyKind kind, bool& hardware, std::string& err,
+                                              KeyScope scope = KeyScope::Machine, bool presence = false);
   ~CngDeviceKey() override;
   CngDeviceKey(const CngDeviceKey&) = delete;
   CngDeviceKey& operator=(const CngDeviceKey&) = delete;

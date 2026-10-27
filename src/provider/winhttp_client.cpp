@@ -17,9 +17,9 @@ struct Handle {
 constexpr size_t kMaxResponse = 1 << 20;
 }  // namespace
 
-atlas::HttpResponse WinHttpClient::post(const std::string& url,
-                                        const std::vector<std::pair<std::string, std::string>>& headers,
-                                        const std::string& body) {
+namespace {
+atlas::HttpResponse request(const wchar_t* verb, const std::string& url,
+                            const std::vector<std::pair<std::string, std::string>>& headers, const std::string& body) {
   std::wstring wurl = toWide(url);
   URL_COMPONENTS uc{};
   uc.dwStructSize = sizeof uc;
@@ -41,12 +41,13 @@ atlas::HttpResponse WinHttpClient::post(const std::string& url,
 
   Handle conn(WinHttpConnect(session.h, host.c_str(), uc.nPort, 0));
   if (!conn.h) return {};
-  Handle req(WinHttpOpenRequest(conn.h, L"POST", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+  Handle req(WinHttpOpenRequest(conn.h, verb, path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                 WINHTTP_FLAG_SECURE));
   if (!req.h) return {};
   std::wstring hdr;
   for (auto& h : headers) hdr += toWide(h.first) + L": " + toWide(h.second) + L"\r\n";
-  if (!WinHttpSendRequest(req.h, hdr.c_str(), static_cast<DWORD>(hdr.size()), const_cast<char*>(body.data()),
+  if (!WinHttpSendRequest(req.h, hdr.c_str(), static_cast<DWORD>(hdr.size()),
+                          body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
                           static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0) ||
       !WinHttpReceiveResponse(req.h, nullptr))
     return {};
@@ -68,6 +69,17 @@ atlas::HttpResponse WinHttpClient::post(const std::string& url,
     out.body.resize(at + got);
   }
   return out;
+}
+
+}  // namespace
+
+atlas::HttpResponse WinHttpClient::post(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
+                                        const std::string& body) {
+  return request(L"POST", url, headers, body);
+}
+
+atlas::HttpResponse WinHttpClient::get(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers) {
+  return request(L"GET", url, headers, "");
 }
 
 }  // namespace win
