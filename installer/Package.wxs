@@ -6,6 +6,7 @@
     INSTANCE_URL, PUBLISHABLE_KEY, INSTANCE_ID   written to %ProgramData%\Atlas\config.json (HTTPS URL required)
     FAIL_OPEN_WHEN_NEVER_SYNCED=1                allow password-only sign-in on a PC that has never synced (default: refuse)
     FAIL_CLOSED_HIDE=1                           hide the stock password tile even before the first sync
+    HIDE_WINDOWS_HELLO=1 / HIDE_SMART_CARD=1     also hide Windows Hello / smart-card sign-in while the stock tiles are hidden
     BREAK_GLASS_ACCOUNTS=AtlasBreakGlass         comma separated local accounts that skip the Atlas step (audited; see ROLLBACK.md)
 
   The stock password tile is hidden by an ICredentialProviderFilter inside the provider DLL, and only while a cached
@@ -26,6 +27,8 @@
     <Property Id="INSTANCE_ID" Secure="yes" />
     <Property Id="FAIL_OPEN_WHEN_NEVER_SYNCED" Value="0" Secure="yes" />
     <Property Id="FAIL_CLOSED_HIDE" Value="0" Secure="yes" />
+    <Property Id="HIDE_WINDOWS_HELLO" Value="0" Secure="yes" />
+    <Property Id="HIDE_SMART_CARD" Value="0" Secure="yes" />
     <Property Id="BREAK_GLASS_ACCOUNTS" Secure="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -52,6 +55,7 @@
         <File Id="EnrollExeFile" Source="$(var.BinDir)\atlas-enroll.exe" KeyPath="yes" />
       </Component>
       <Component Id="SyncExe" Bitness="always64">
+        <File Id="PasskeyExeFile" Source="$(var.BinDir)\atlas-passkey.exe" />
         <File Id="SyncExeFile" Source="$(var.BinDir)\atlas-sync.exe" KeyPath="yes" />
       </Component>
       <Component Id="SupportFiles" Bitness="always64">
@@ -71,7 +75,7 @@
 
     <!-- config.json from the MSI properties (left alone if this PC is already enrolled) -->
     <CustomAction Id="WriteConfig" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand="&quot;[INSTALLFOLDER]atlas-enroll.exe&quot; --write-config --fail-open &quot;[FAIL_OPEN_WHEN_NEVER_SYNCED]&quot; --fail-closed-hide &quot;[FAIL_CLOSED_HIDE]&quot; --break-glass &quot;[BREAK_GLASS_ACCOUNTS]&quot; --instance-url &quot;[INSTANCE_URL]&quot; --publishable-key &quot;[PUBLISHABLE_KEY]&quot; --instance-id &quot;[INSTANCE_ID]&quot;" />
+                  ExeCommand="&quot;[INSTALLFOLDER]atlas-enroll.exe&quot; --write-config --fail-open &quot;[FAIL_OPEN_WHEN_NEVER_SYNCED]&quot; --fail-closed-hide &quot;[FAIL_CLOSED_HIDE]&quot; --hide-windows-hello &quot;[HIDE_WINDOWS_HELLO]&quot; --hide-smart-card &quot;[HIDE_SMART_CARD]&quot; --break-glass &quot;[BREAK_GLASS_ACCOUNTS]&quot; --instance-url &quot;[INSTANCE_URL]&quot; --publishable-key &quot;[PUBLISHABLE_KEY]&quot; --instance-id &quot;[INSTANCE_ID]&quot;" />
     <CustomAction Id="CreateSyncTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;Atlas\LoginAgentSync&quot; /XML &quot;[INSTALLFOLDER]atlas-sync-task.xml&quot; /F" />
     <CustomAction Id="DeleteSyncTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"

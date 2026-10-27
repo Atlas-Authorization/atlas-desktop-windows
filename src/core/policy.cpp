@@ -32,6 +32,22 @@ bool isStockPasswordTypeProvider(const std::string& clsid, bool includeWindowsHe
   return includeWindowsHello && c == "{d6886603-9d2f-4eb2-b667-1971041fa96b}";
 }
 
+bool isStockSmartCardProvider(const std::string& clsid) {
+  // Microsoft documents the Filter mechanism (ICredentialProviderFilter::Filter) but publishes no table of in-box provider CLSIDs;
+  // these are the values the OS registers under HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers,
+  // and the Windows CI job reads that key on a real runner to confirm each name still maps to its GUID.
+  static const char* ids[] = {
+      "{8fd7e19c-3bf7-489b-a72c-846ab3678c96}",  // Smartcard Credential Provider
+      "{1b283861-754f-4022-ad47-a5eaaa618894}",  // Smartcard Reader Selection Provider
+      "{1ee7337f-85ac-45e2-a23c-37c753209769}",  // Smartcard WinRT Provider
+      "{94596c7e-3744-41ce-893e-bbf09122f76a}",  // Smartcard Pin Provider
+  };
+  std::string c = lower(clsid);
+  for (const char* id : ids)
+    if (c == id) return true;
+  return false;
+}
+
 bool isBreakGlass(const Config& cfg, const std::string& domain, const std::string& user, const std::string& machine) {
   std::string u = lower(user), d = lower(domain), m = lower(machine);
   bool local = d.empty() || d == "." || d == m;

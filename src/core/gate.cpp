@@ -61,7 +61,7 @@ StepResult LoginGate::finishVerify(const ApiResult& r) {
   if (r.status == 429) { challengeId_.clear(); return {Step::Failed, "too_many_attempts"}; }
   if (!r.ok() || !r.body.is_object()) { challengeId_.clear(); return {Step::Failed, r.errorCode()}; }
   std::string s = r.body.value("status", "");
-  if (s == "verified") { satisfied_ = true; challengeId_.clear(); return {Step::Verified, ""}; }
+  if (s == "verified") { satisfied_ = true; lastVerified_ = challengeId_; challengeId_.clear(); return {Step::Verified, ""}; }
   if (s == "pending") return {Step::Pending, ""};
   challengeId_.clear();
   return {Step::Failed, "challenge_failed"};
@@ -99,19 +99,35 @@ StepResult LoginGate::submitCode(const std::string& code) {
   return finishVerify(client_.verify(challengeId_, code, std::nullopt));
 }
 
-StepResult LoginGate::submitPasskey() {
+StepResult LoginGate::startPasskey(json& optionsOut) {
   if (decision_.kind != GateDecision::Kind::Required || !decision_.online ||
-      std::find(decision_.factors.begin(), decision_.factors.end(), "passkey") == decision_.factors.end() || !passkey_)
-    return {Step::Unsupported, "unsupported_in_this_build"};
+      std::find(decision_.factors.begin(), decision_.factors.end(), "passkey") == decision_.factors.end())
+    return {Step::Unsupported, "passkey_unavailable"};
   ApiResult s = client_.startChallenge("passkey");
   if (s.unreachable()) return {Step::Unreachable, ""};
   if (!s.ok() || !s.body.is_object() || !s.body.contains("id") || !s.body.contains("passkey_options"))
     return {Step::Failed, s.errorCode()};
   challengeId_ = s.body["id"];
   challengeFactor_ = "passkey";
-  auto assertion = passkey_(s.body["passkey_options"]);
+  optionsOut = s.body["passkey_options"];
+  return {Step::Pending, ""};
+}
+
+StepResult LoginGate::completePasskey(const std::optional<json>& assertion) {
+  if (challengeId_.empty() || challengeFactor_ != "passkey") return {Step::Failed, "no_challenge"};
   if (!assertion) { challengeId_.clear(); return {Step::Failed, "cancelled"}; }
-  return finishVerify(client_.verify(challengeId_, std::nullopt, *assertion));
+  StepResult r = finishVerify(client_.verify(challengeId_, std::nullopt, assertion));
+  // A rejected assertion spent its WebAuthn challenge: the next attempt starts a new one.
+  if (r.step == Step::WrongCode) { challengeId_.clear(); return {Step::Failed, "passkey_rejected"}; }
+  return r;
+}
+
+StepResult LoginGate::submitPasskey() {
+  if (!passkey_) return {Step::Unsupported, "unsupported_in_this_build"};
+  json options;
+  StepResult s = startPasskey(options);
+  if (s.step != Step::Pending) return s;
+  return completePasskey(passkey_(options));
 }
 
 StepResult LoginGate::submitOffline(const std::string& pin, const std::string& code) {

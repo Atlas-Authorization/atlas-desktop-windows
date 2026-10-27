@@ -8,6 +8,7 @@
 #include "agent.hpp"
 #include "atlas/policy.hpp"
 #include "guids.hpp"
+#include "webauthn_win.hpp"
 #include "winutil.hpp"
 
 #include <credentialprovider.h>
@@ -38,7 +39,7 @@ BOOL APIENTRY DllMain(HINSTANCE h, DWORD reason, LPVOID) {
 namespace {
 
 // ---- extra fields appended after the inner provider's own fields ----
-enum Extra : DWORD { kStatus, kNumber, kCode, kPin, kPush, kOffline, kExtraCount };
+enum Extra : DWORD { kStatus, kNumber, kCode, kPin, kPush, kOffline, kPasskey, kExtraCount };
 
 HRESULT dup(PCWSTR s, PWSTR* out) { return SHStrDupW(s, out); }
 
@@ -203,9 +204,11 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
     for (DWORD e = 0; e < kExtraCount; e++) states_[base_ + e] = {CPFS_HIDDEN, CPFIS_NONE};
     strings_[base_ + kPush] = L"Send push approval";
     strings_[base_ + kOffline] = L"Use offline code";
+    strings_[base_ + kPasskey] = L"Use security key";
     if (agent_) gate_ = std::make_unique<atlas::LoginGate>(agent_->cfg, *agent_->client, *agent_->sync, *agent_->vault, agent_->store);
   }
   ~AtlasCredential() { requestStop(); joinPoll(); --g_objects; }
+  // webauthn_ asks for LogonUI's window through this credential, so it must not outlive it (the destructor joins its thread first).
 
   // IUnknown
   IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
@@ -276,6 +279,9 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
     } else if (id == base_ + kOffline) {
       std::lock_guard<std::mutex> g(agent_->mu);
       if (prompted_ && decision_.offlineAvailable) { requestStop(); enterOfflineLocked(); }
+    } else if (id == base_ + kPasskey) {
+      std::lock_guard<std::mutex> g(agent_->mu);
+      if (prompted_ && !offlineMode_) startPasskeyLocked();
     }
     return S_OK;
   }
@@ -367,20 +373,24 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
   void showPromptLocked() {
     const auto& d = decision_;
     bool totp = has(d.factors, "totp"), push = has(d.factors, "push");
+    bool passkey = has(d.factors, "passkey") && webauthn_.available();
     offlineMode_ = d.offlineAvailable && (!d.online || (!totp && !push));
     setShown(kStatus, true);
     setShown(kPush, push);
+    setShown(kPasskey, passkey && !offlineMode_);
     setShown(kOffline, d.offlineAvailable && !offlineMode_);
     setShown(kCode, totp || offlineMode_, true);
     setShown(kPin, offlineMode_ && d.offlinePinRequired);
     status(offlineMode_ ? (d.offlinePinRequired ? L"Atlas can't be reached. Enter your PIN and the code from your authenticator app."
                                                  : L"Atlas can't be reached. Enter the code from your authenticator app.")
-                        : L"Approve the sign-in on your phone, or enter a code, then sign in again.");
+                        : (passkey && !totp && !push) ? L"Choose Use security key, touch your key, then sign in again."
+                                                      : L"Approve the sign-in on your phone, or enter a code, then sign in again.");
   }
   void enterOfflineLocked() {
     offlineMode_ = true;
     setShown(kNumber, false);
     setShown(kPush, false);
+    setShown(kPasskey, false);
     setShown(kOffline, false);
     setShown(kCode, true, true);
     setShown(kPin, decision_.offlinePinRequired);
@@ -401,6 +411,42 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
       status(r.step == atlas::Step::Unreachable ? L"Can't reach Atlas to send the push. Enter a code instead."
                                                 : L"Push approval is not available. Enter a code instead.");
     }
+  }
+
+  // The ceremony blocks while Windows shows its own prompt, so it runs on a worker thread outside agent_->mu; the
+  // server round trips on either side take the lock.
+  void startPasskeyLocked() {
+    requestStop();
+    joinPoll();
+    atlas::json options;
+    atlas::StepResult r = gate_->startPasskey(options);
+    if (r.step != atlas::Step::Pending) {
+      status(r.step == atlas::Step::Unreachable ? L"Can't reach Atlas to start the security key check." : L"A security key is not available. Use another method.");
+      return;
+    }
+    setShown(kNumber, false);
+    status(L"Touch your security key. Windows may ask for its PIN.");
+    stop_ = false;
+    thread_ = std::thread([this, options] { passkeyLoop(options); });
+  }
+  void passkeyLoop(atlas::json options) {
+    auto assertion = atlas::makePasskeyFn(webauthn_)(options);  // blocks; cancel() from requestStop() aborts it
+    if (stop_) return;  // deselected or replaced: the challenge is stale, the next attempt starts a new one
+    atlas::StepResult r;
+    for (;;) {
+      std::unique_lock<std::mutex> g(agent_->mu, std::try_to_lock);
+      if (g.owns_lock()) {
+        if (stop_) return;
+        r = gate_->completePasskey(assertion);
+        break;
+      }
+      if (stop_) return;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (r.step == atlas::Step::Verified) status(L"Security key accepted. Press Enter or the arrow to sign in.");
+    else if (r.step == atlas::Step::Unreachable) status(L"Can't reach Atlas to check the security key. Try again.");
+    else if (r.detail == "cancelled") status(L"The security key check was cancelled or timed out. Try again or use another method.");
+    else status(L"That security key was not accepted. Try again or use another method.");
   }
 
   HRESULT serializeLocked(CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* resp, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* cs,
@@ -478,7 +524,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
           CoTaskMemFree(innerText);
           *resp = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
           *icon = CPSI_WARNING;
-          dup(L"Approve the push on your phone, or enter a code.", statusText);
+          dup(L"Approve the push on your phone, use your security key, or enter a code.", statusText);
           return S_OK;
         }
         atlas::StepResult r = offlineMode_ ? gate_->submitOffline(win::toUtf8(pin), win::toUtf8(code)) : gate_->submitCode(win::toUtf8(code));
@@ -526,6 +572,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
   }
   void requestStop() {
     stop_ = true;
+    webauthn_.cancel();  // no-op unless a security-key prompt is open
     cv_.notify_all();
   }
   void joinPoll() {
@@ -566,6 +613,16 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
   atlas::GateDecision decision_;            // guarded by agent_->mu
   bool prompted_ = false, offlineMode_ = false;  // guarded by agent_->mu
   std::wstring verifiedIdentity_;                // account whose password was checked; guarded by agent_->mu
+
+  // LogonUI's window, the documented parent for anything a credential shows (ICredentialProviderCredentialEvents::OnCreatingWindow).
+  HWND ownerWindow() {
+    ComPtr<ICredentialProviderCredentialEvents> ev;
+    { std::lock_guard<std::mutex> l(uiMu_); ev = events_; }
+    HWND h = nullptr;
+    if (ev) ev->OnCreatingWindow(&h);
+    return h;
+  }
+  win::WinWebAuthn webauthn_{[this] { return ownerWindow(); }};
 
   std::mutex uiMu_;
   ComPtr<ICredentialProviderCredentialEvents> events_;
@@ -633,7 +690,8 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     if (i < innerFields_ || !wrapped_) return inner_->GetFieldDescriptorAt(i, pp);
     static const struct { CREDENTIAL_PROVIDER_FIELD_TYPE t; PCWSTR label; } defs[kExtraCount] = {
         {CPFT_SMALL_TEXT, L"Atlas status"},      {CPFT_LARGE_TEXT, L"Number to match"}, {CPFT_EDIT_TEXT, L"Authentication code"},
-        {CPFT_PASSWORD_TEXT, L"Offline PIN"},    {CPFT_COMMAND_LINK, L"Send push approval"}, {CPFT_COMMAND_LINK, L"Use offline code"}};
+        {CPFT_PASSWORD_TEXT, L"Offline PIN"},    {CPFT_COMMAND_LINK, L"Send push approval"}, {CPFT_COMMAND_LINK, L"Use offline code"},
+        {CPFT_COMMAND_LINK, L"Use security key"}};
     DWORD e = i - innerFields_;
     if (e >= kExtraCount) return E_INVALIDARG;
     auto* d = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR)));
@@ -675,11 +733,11 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     bool ours = false;
     for (DWORD i = 0; i < count; i++)
       if (clsids[i] == CLSID_AtlasCredentialProvider && allow[i]) ours = true;
-    bool hideHello = false;
-    if (!ours || !shouldHideStock(&hideHello)) return S_OK;
+    bool hideHello = false, hideCard = false;
+    if (!ours || !shouldHideStock(&hideHello, &hideCard)) return S_OK;
     for (DWORD i = 0; i < count; i++) {
       wchar_t buf[64] = {};
-      if (StringFromGUID2(clsids[i], buf, 64) && atlas::isStockPasswordTypeProvider(win::toUtf8(buf), hideHello)) allow[i] = FALSE;
+      if (StringFromGUID2(clsids[i], buf, 64) && (atlas::isStockPasswordTypeProvider(win::toUtf8(buf), hideHello) || (hideCard && atlas::isStockSmartCardProvider(win::toUtf8(buf))))) allow[i] = FALSE;
     }
     return S_OK;
   }
@@ -698,7 +756,7 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
   IFACEMETHODIMP SetUserArray(ICredentialProviderUserArray* users) override { return innerUsers_ ? innerUsers_->SetUserArray(users) : S_OK; }
 
  private:
-  static bool shouldHideStock(bool* hideHello = nullptr) {
+  static bool shouldHideStock(bool* hideHello = nullptr, bool* hideCard = nullptr) {
     // Hide only when an enrolled, healthy install says MFA is required (or the config asks to fail closed).
     std::shared_ptr<win::Agent> a;
     std::string why;
@@ -708,6 +766,7 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     in.enrolled = true;
     in.failClosedHide = a->cfg.failClosedHide;
     if (hideHello) *hideHello = a->cfg.hideWindowsHello;
+    if (hideCard) *hideCard = a->cfg.hideSmartCard;
     atlas::SyncCache c = atlas::loadSyncCache(a->store);
     in.cacheKnown = c.known;
     in.cacheRequired = c.required;

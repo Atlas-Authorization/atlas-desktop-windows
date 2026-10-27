@@ -377,6 +377,41 @@ TEST(Policy, StockProviderList) {
   EXPECT_FALSE(isStockPasswordTypeProvider(""));
 }
 
+TEST(Config, HideOptionsDefaultOffRoundTripAndMustBeBooleans) {
+  const char* base = R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i")";
+  auto d = parseConfig(std::string(base) + "}");
+  ASSERT_TRUE(d.config);
+  EXPECT_FALSE(d.config->hideWindowsHello);
+  EXPECT_FALSE(d.config->hideSmartCard);
+  auto on = parseConfig(std::string(base) + R"(,"hide_windows_hello":true,"hide_smart_card":true})");
+  ASSERT_TRUE(on.config) << on.error;
+  EXPECT_TRUE(on.config->hideWindowsHello);
+  EXPECT_TRUE(on.config->hideSmartCard);
+  auto back = parseConfig(on.config->toJson().dump());
+  ASSERT_TRUE(back.config);
+  EXPECT_TRUE(back.config->hideSmartCard);
+  EXPECT_TRUE(back.config->hideWindowsHello);
+  auto only = parseConfig(std::string(base) + R"(,"hide_smart_card":true})");
+  EXPECT_TRUE(only.config->hideSmartCard);
+  EXPECT_FALSE(only.config->hideWindowsHello);
+  EXPECT_FALSE(parseConfig(std::string(base) + R"(,"hide_smart_card":"yes"})").config);
+  EXPECT_FALSE(parseConfig(std::string(base) + R"(,"hide_smart_card":1})").config);
+}
+
+TEST(Policy, SmartCardProviderList) {
+  for (const char* id : {"{8FD7E19C-3BF7-489B-A72C-846AB3678C96}", "{1b283861-754f-4022-ad47-a5eaaa618894}",
+                         "{1EE7337F-85AC-45E2-A23C-37C753209769}", "{94596c7e-3744-41ce-893e-bbf09122f76a}"})
+    EXPECT_TRUE(isStockSmartCardProvider(id)) << id;
+  // Everything else stays: password, picture password, PIN, Hello, Atlas itself, the FIDO provider, garbage.
+  for (const char* id : {"{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}", "{2135f72a-90b5-4ed3-a7f1-8bb705ac276a}", "{cb82ea12-9f71-446d-89e1-8d0924e1256e}",
+                         "{D6886603-9D2F-4EB2-B667-1971041FA96B}", "{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}", "{F8A1793B-7873-4046-B2A7-1F318747F427}",
+                         "", "8FD7E19C-3BF7-489B-A72C-846AB3678C96", "{8fd7e19c-3bf7-489b-a72c-846ab3678c96}x"})
+    EXPECT_FALSE(isStockSmartCardProvider(id)) << id;
+  // The two hide options are independent: smart-card ids are not password-type, and Hello is not a smart card.
+  EXPECT_FALSE(isStockPasswordTypeProvider("{8FD7E19C-3BF7-489B-A72C-846AB3678C96}", true));
+  EXPECT_FALSE(isStockSmartCardProvider("{D6886603-9D2F-4EB2-B667-1971041FA96B}"));
+}
+
 TEST(Policy, BreakGlassMatching) {
   Config c;
   c.breakGlassAccounts = {"AtlasBreakGlass", "CORP\\admin2"};
