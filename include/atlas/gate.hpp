@@ -37,7 +37,11 @@ class LoginGate {
   StepResult startPush();  // detail = the number to display
   StepResult pollPush();
   StepResult submitCode(const std::string& code);  // online TOTP
-  StepResult submitPasskey();
+  StepResult submitPasskey();  // start + hook + complete in one call (blocks for the whole ceremony)
+  // The same ceremony in two halves, so a host can run the blocking authenticator call outside its own locks.
+  StepResult startPasskey(json& optionsOut);
+  StepResult completePasskey(const std::optional<json>& assertion);  // nullopt = the user cancelled or the authenticator failed
+  const std::string& lastVerifiedChallengeId() const { return lastVerified_; }  // proof for passkey enrolment
   StepResult submitOffline(const std::string& pin, const std::string& code);
 
   bool satisfied() const { return satisfied_; }
@@ -52,7 +56,7 @@ class LoginGate {
   ISecretStore& store_;
   PasskeyFn passkey_;
   bool satisfied_ = false;
-  std::string challengeId_, challengeFactor_;
+  std::string challengeId_, challengeFactor_, lastVerified_;
   GateDecision decision_;
 };
 

@@ -36,6 +36,10 @@ struct Server {
   std::string reportPayload;
   std::set<std::string> usedNonces;
   std::vector<std::string> badSignatures;
+  json passkeyOptions = {{"challenge", "abc"}};
+  bool rejectAssertion = false;
+  json lastAssertion, lastCredential;
+  std::string lastRegistration;
 
   bool sigOk(const json& b, const std::string& purpose, const std::string& nonce, const std::optional<std::string>& extra) {
     auto sig = b64uDecode(b.value("signature", ""));
@@ -58,12 +62,24 @@ struct Server {
     if (path.rfind("challenges/", 0) == 0) {
       std::string id = path.substr(11, path.size() - 11 - 7);
       if (!sigOk(b, "verify", id, std::nullopt)) return err(401, "unauthorized");
+      if (b.contains("assertion")) {
+        lastAssertion = b["assertion"];
+        if (rejectAssertion) return err(422, "verification_failed");
+        return reply(200, {{"status", pushStatus}});
+      }
       if (b.contains("code")) {
         if (b["code"] == rightCode) return reply(200, {{"status", "verified"}});
         if (++wrongAnswers >= 5) return err(429, "too_many_attempts");
         return err(422, "verification_failed");
       }
       return reply(200, {{"status", pushStatus}});
+    }
+    if (path.rfind("passkeys/", 0) == 0 && path != "passkeys/options") {  // the registration id plays the nonce
+      std::string id = path.substr(9, path.size() - 9 - 6);
+      if (!sigOk(b, "passkey_enrol", id, std::nullopt)) return err(401, "unauthorized");
+      lastRegistration = id;
+      lastCredential = b["credential"];
+      return reply(201, {{"object", "desktop_passkey"}, {"id", "ddp_1"}, {"name", b.value("name", "")}});
     }
     // single-use nonce, bound to this call
     auto n = b.value("nonce", "");
@@ -83,12 +99,23 @@ struct Server {
       return reply(200, {{"status", "active"}, {"required", required}, {"allowed_factors", factors}, {"offline", off},
                          {"server_time", 1800000000000}});
     }
+    if (path == "passkeys/options") {
+      std::string proof = b.value("proof_challenge_id", "");
+      if (!sigOk(b, "passkey_options", n, proof)) return err(401, "unauthorized");
+      if (proof != "chl_totp") return err(403, "verification_failed");
+      return reply(201, {{"registration_id", proof},
+                         {"passkey_options", {{"challenge", "QUJDREVGR0hJSktMTU5PUA"}, {"rp", {{"id", "auth.example.com"}, {"name", "Atlas"}}},
+                                              {"origin", "https://auth.example.com"}, {"user", {{"id", "dXNyXzE"}, {"name", "u"}, {"displayName", "U"}}},
+                                              {"pubKeyCredParams", json::array({{{"type", "public-key"}, {"alg", -7}}})},
+                                              {"excludeCredentials", json::array()},
+                                              {"authenticatorSelection", {{"userVerification", "required"}}}}}});
+    }
     if (path == "challenges") {
       std::string f = b.value("factor", "");
       if (!sigOk(b, "challenge", n, f)) return err(401, "unauthorized");
       json r = {{"id", "chl_" + f}, {"factor", f}, {"expires_at", 1}};
       if (f == "push") r["number_match"] = "47";
-      if (f == "passkey") r["passkey_options"] = {{"challenge", "abc"}};
+      if (f == "passkey") r["passkey_options"] = passkeyOptions;
       return reply(201, r);
     }
     if (path == "report") {
@@ -526,4 +553,137 @@ TEST(Gate, VerifiedAfterUnverifiedWorks) {
   Rig r;
   r.gate->begin(false);
   EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::Required);
+}
+
+// ---- passkey ceremony through the gate ----
+
+#include "atlas/passkey.hpp"
+
+namespace {
+struct FakeAuth : IPasskeyAuthenticator {
+  bool ok = true, cancelCalled = false;
+  int getCalls = 0, makeCalls = 0;
+  std::string lastClientData;
+  bool available() override { return ok; }
+  std::optional<RawAssertion> getAssertion(const PasskeyRequest&, const std::string& cd, std::string&) override {
+    getCalls++;
+    lastClientData = cd;
+    return RawAssertion{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}};
+  }
+  std::optional<RawAttestation> makeCredential(const PasskeyCreation&, const std::string& cd, std::string&) override {
+    makeCalls++;
+    lastClientData = cd;
+    return RawAttestation{{1, 2, 3}, {0xa1, 0x00}, {"usb"}};
+  }
+  void cancel() override { cancelCalled = true; }
+};
+
+json goodOptions() {
+  return {{"challenge", "QUJDREVGR0hJSktMTU5PUA"}, {"rpId", "auth.example.com"}, {"origin", "https://auth.example.com"},
+          {"userVerification", "required"}, {"allowCredentials", json::array({{{"type", "public-key"}, {"id", "AQID"}, {"transports", json::array({"usb"})}}})}};
+}
+}  // namespace
+
+TEST(PasskeyGate, SplitCeremonyForwardsTheAssertionAndVerifies) {
+  Rig r;
+  r.server.factors = json::array({"passkey"});
+  r.server.passkeyOptions = goodOptions();
+  r.server.pushStatus = "verified";
+  r.gate->begin(true);
+  json opts;
+  ASSERT_EQ(r.gate->startPasskey(opts).step, Step::Pending);
+  EXPECT_EQ(opts["rpId"], "auth.example.com");
+  FakeAuth fa;
+  auto fn = makePasskeyFn(fa);
+  auto a = fn(opts);
+  ASSERT_TRUE(a);
+  EXPECT_EQ(fa.getCalls, 1);
+  EXPECT_EQ(r.gate->completePasskey(a).step, Step::Verified);
+  EXPECT_TRUE(r.gate->satisfied());
+  EXPECT_EQ(r.gate->lastVerifiedChallengeId(), "chl_passkey");
+  // The server saw exactly what the authenticator produced, with the client data we built.
+  EXPECT_EQ(r.server.lastAssertion["credential_id"], "AQID");
+  EXPECT_EQ(r.server.lastAssertion["challenge"], "QUJDREVGR0hJSktMTU5PUA");
+  json cd = json::parse(*b64uDecode(r.server.lastAssertion["client_data_json"]));
+  EXPECT_EQ(cd["type"], "webauthn.get");
+  EXPECT_EQ(cd["origin"], "https://auth.example.com");
+  EXPECT_EQ(cd["challenge"], "QUJDREVGR0hJSktMTU5PUA");
+  EXPECT_TRUE(r.server.badSignatures.empty());
+}
+
+TEST(PasskeyGate, CancelledOrRejectedNeverVerifiesAndNextAttemptStartsFresh) {
+  Rig r;
+  r.server.factors = json::array({"passkey"});
+  r.server.passkeyOptions = goodOptions();
+  r.gate->begin(true);
+  json opts;
+  ASSERT_EQ(r.gate->startPasskey(opts).step, Step::Pending);
+  auto s = r.gate->completePasskey(std::nullopt);
+  EXPECT_EQ(s.step, Step::Failed);
+  EXPECT_EQ(s.detail, "cancelled");
+  EXPECT_FALSE(r.gate->satisfied());
+  EXPECT_EQ(r.gate->completePasskey(std::nullopt).detail, "no_challenge");  // nothing left to answer
+
+  r.server.rejectAssertion = true;
+  ASSERT_EQ(r.gate->startPasskey(opts).step, Step::Pending);
+  FakeAuth fa;
+  s = r.gate->completePasskey(makePasskeyFn(fa)(opts));
+  EXPECT_EQ(s.step, Step::Failed);
+  EXPECT_EQ(s.detail, "passkey_rejected");
+  EXPECT_FALSE(r.gate->satisfied());
+  EXPECT_EQ(r.gate->completePasskey(makePasskeyFn(fa)(opts)).detail, "no_challenge");
+}
+
+TEST(PasskeyGate, OnlyWhenTheServerAllowsItAndOnline) {
+  Rig r;
+  r.server.factors = json::array({"totp"});
+  r.gate->begin(true);
+  json opts;
+  EXPECT_EQ(r.gate->startPasskey(opts).step, Step::Unsupported);
+  EXPECT_EQ(r.http.count("challenges"), 0u);
+}
+
+TEST(PasskeyGate, MalformedServerOptionsNeverReachTheAuthenticator) {
+  FakeAuth fa;
+  auto fn = makePasskeyFn(fa);
+  json o = goodOptions();
+  o["origin"] = "https://evil.example";  // not https://<rpId>
+  EXPECT_FALSE(fn(o));
+  o = goodOptions();
+  o["challenge"] = "short";
+  EXPECT_FALSE(fn(o));
+  EXPECT_EQ(fa.getCalls, 0);
+  fa.ok = false;  // platform API missing
+  EXPECT_FALSE(fn(goodOptions()));
+  EXPECT_EQ(fa.getCalls, 0);
+}
+
+TEST(PasskeyEnrol, RunsThroughProofOptionsAuthenticatorAndFinish) {
+  Rig r;
+  FakeAuth fa;
+  auto res = enrollPasskey(*r.client, fa, "chl_totp", "Desk key");
+  ASSERT_TRUE(res.ok) << res.error;
+  EXPECT_EQ(res.passkeyId, "ddp_1");
+  EXPECT_EQ(fa.makeCalls, 1);
+  EXPECT_EQ(r.server.lastRegistration, "chl_totp");
+  EXPECT_EQ(r.server.lastCredential["attestation_object"], b64uEncode(Bytes{0xa1, 0x00}));
+  json cd = json::parse(*b64uDecode(r.server.lastCredential["client_data_json"]));
+  EXPECT_EQ(cd["type"], "webauthn.create");
+  EXPECT_EQ(cd["origin"], "https://auth.example.com");
+  EXPECT_TRUE(r.server.badSignatures.empty());
+}
+
+TEST(PasskeyEnrol, RefusedProofOrMissingPlatformSupportStopsBeforeTheAuthenticator) {
+  Rig r;
+  FakeAuth fa;
+  auto res = enrollPasskey(*r.client, fa, "chl_other", "k");
+  EXPECT_FALSE(res.ok);
+  EXPECT_EQ(res.error, "verification_failed");
+  EXPECT_EQ(fa.makeCalls, 0);
+  fa.ok = false;
+  EXPECT_FALSE(enrollPasskey(*r.client, fa, "chl_totp", "k").ok);
+  EXPECT_EQ(r.http.count("passkeys/options"), 1u);  // the second attempt never called the server
+  fa.ok = true;
+  r.http.down = true;
+  EXPECT_EQ(enrollPasskey(*r.client, fa, "chl_totp", "k").error, "server unreachable");
 }

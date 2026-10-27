@@ -24,6 +24,10 @@ bool shouldHideStockProvider(const HideInputs& in);
 // and are left alone.
 bool isStockPasswordTypeProvider(const std::string& clsid, bool includeWindowsHello = false);
 
+// The in-box smart-card sign-in providers (config hide_smart_card): the smart card credential provider itself plus its
+// reader-selection, WinRT and PIN helpers, which draw the smart-card tiles. Case-insensitive CLSID string with braces.
+bool isStockSmartCardProvider(const std::string& clsid);
+
 // Break-glass local account (config break_glass_accounts). An entry without a backslash matches only a local
 // account (empty / "." / this machine as the domain); an entry "DOMAIN\name" must match exactly. Case-insensitive.
 bool isBreakGlass(const Config& cfg, const std::string& domain, const std::string& user, const std::string& machineName);

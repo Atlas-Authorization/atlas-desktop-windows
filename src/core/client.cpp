@@ -94,6 +94,19 @@ ApiResult Client::report(const std::string& payload) {
   return signedCall("report", "report", b64uEncode(sha256(toBytes(payload))), {{"payload", payload}});
 }
 
+ApiResult Client::passkeyOptions(const std::string& proofChallengeId) {
+  return signedCall("passkeys/options", "passkey_options", proofChallengeId, {{"proof_challenge_id", proofChallengeId}});
+}
+
+ApiResult Client::passkeyEnrol(const std::string& registrationId, const json& credential, const std::string& name,
+                               const std::vector<std::string>& transports) {
+  Bytes sig = key_.sign(toBytes(signedMessage("passkey_enrol", cfg_.instanceId, cfg_.deviceId, registrationId)));
+  if (sig.size() != 64) return {};
+  json body = {{"device_id", cfg_.deviceId}, {"signature", b64uEncode(sig)}, {"credential", credential}, {"transports", transports}};
+  if (!name.empty()) body["name"] = name;
+  return post("passkeys/" + registrationId + "/enrol", body);
+}
+
 // ---- SyncCache ----
 
 json SyncCache::toJson() const {

@@ -10,6 +10,7 @@ struct Config {
   bool failOpenWhenNeverSynced = false;
   bool failClosedHide = false;                 // hide the stock tile even before the first sync
   bool hideWindowsHello = false;               // also hide Windows Hello for Business (it is device-bound 2FA already)
+  bool hideSmartCard = false;                  // also hide the smart-card sign-in tiles (when cards must not bypass the Atlas step)
   std::vector<std::string> breakGlassAccounts;  // local accounts that skip the Atlas step (audited)
 
   std::string baseUrl() const;  // instance_url without a trailing slash

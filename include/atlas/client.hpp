@@ -31,6 +31,10 @@ class Client {
   ApiResult verify(const std::string& challengeId, const std::optional<std::string>& code,
                    const std::optional<json>& assertion);
   ApiResult report(const std::string& payload);
+  // Passkey enrolment: options need a verified challenge of this workstation; the finishing call is signed over the registration id.
+  ApiResult passkeyOptions(const std::string& proofChallengeId);
+  ApiResult passkeyEnrol(const std::string& registrationId, const json& credential, const std::string& name,
+                         const std::vector<std::string>& transports);
 
  private:
   ApiResult post(const std::string& path, const json& body);
