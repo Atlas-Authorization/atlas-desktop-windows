@@ -1,0 +1,37 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-msvc-x64",
+      "displayName": "Windows MSVC x64 (vcpkg)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-x64",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "ATLAS_BUILD_TESTS": "ON",
+        "ATLAS_BUILD_PROVIDER": "ON"
+      }
+    },
+    {
+      "name": "macos-dev",
+      "displayName": "macOS portable core only",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/macos-dev",
+      "cacheVariables": {
+        "ATLAS_BUILD_TESTS": "ON",
+        "ATLAS_BUILD_PROVIDER": "OFF",
+        "OPENSSL_ROOT_DIR": "/opt/homebrew/opt/openssl@3"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-x64", "configurePreset": "windows-msvc-x64", "configuration": "Release" },
+    { "name": "macos-dev", "configurePreset": "macos-dev" }
+  ],
+  "testPresets": [
+    { "name": "windows-msvc-x64", "configurePreset": "windows-msvc-x64", "configuration": "Release" },
+    { "name": "macos-dev", "configurePreset": "macos-dev" }
+  ]
+}
