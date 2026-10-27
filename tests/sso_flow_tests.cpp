@@ -89,13 +89,13 @@ struct Idp : IHttpClient {
       return j(201, {{"object", "device_sso_registration"}, {"id", regId}, {"user_id", "usr_1"}, {"status", "active"}});
     }
     if (url == std::string(kApi) + "register_user") {
-      if (!nonces.erase(b["nonce"])) return err(401, "nonce");
+      if (!nonces.erase(b["nonce"].get<std::string>())) return err(401, "nonce");
       if (!sigOk(signingPub, signedMessage("sso_user", "ins_1", regId, b["nonce"], jwkKid(b["user_public_key"])), b["signature"])) return err(401, "verification_failed");
       userPub = b["user_public_key"];
       return j(200, {{"id", regId}, {"user_key_registered", true}});
     }
     if (url == std::string(kApi) + "web_session") {
-      if (!nonces.erase(b["nonce"])) return err(401, "nonce");
+      if (!nonces.erase(b["nonce"].get<std::string>())) return err(401, "nonce");
       if (revoked || refreshToken.empty()) return err(403, "forbidden");
       std::string ru = b.value("redirect_url", "");
       std::string rh = ru.empty() ? "-" : b64uEncode(sha256(toBytes(ru)));
@@ -121,7 +121,7 @@ struct Idp : IHttpClient {
     if (h["alg"] != "ES256" || h["kid"] != jwkKid(signingPub)) return err(401, "unknown_device");
     if (!sigOk(signingPub, seg(jwt, 0) + "." + seg(jwt, 1), seg(jwt, 2))) return err(401, "bad_signature");
     if (b["client_id"] != "pk_1" || b["iss"] != "pk_1" || b["aud"] != tokenEndpoint) return err(401, "bad_claims");
-    if (!nonces.erase(b["request_nonce"])) return err(401, "nonce");
+    if (!nonces.erase(b["request_nonce"].get<std::string>())) return err(401, "nonce");
     bool isLogin = b["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer";
     bool isRefresh = b["grant_type"] == "refresh_token";
     if (isLogin) {

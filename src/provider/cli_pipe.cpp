@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <vector>
 
 namespace win {
 
