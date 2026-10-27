@@ -30,7 +30,7 @@ endif()
 
 add_library(atlas_core STATIC
   src/core/base.cpp src/core/crypto.cpp src/core/softkey.cpp src/core/offline.cpp
-  src/core/config.cpp src/core/policy.cpp src/core/client.cpp src/core/gate.cpp src/core/passkey.cpp)
+  src/core/config.cpp src/core/policy.cpp src/core/client.cpp src/core/gate.cpp src/core/passkey.cpp src/core/devicesso.cpp src/core/cli.cpp)
 target_include_directories(atlas_core PUBLIC include)
 target_link_libraries(atlas_core PUBLIC nlohmann_json::nlohmann_json PRIVATE OpenSSL::Crypto)
 if(MSVC)
@@ -49,7 +49,7 @@ if(ATLAS_BUILD_TESTS)
     set(INSTALL_GTEST OFF CACHE INTERNAL "")
     FetchContent_MakeAvailable(googletest)
   endif()
-  add_executable(atlas_core_tests tests/core_tests.cpp tests/flow_tests.cpp tests/passkey_tests.cpp)
+  add_executable(atlas_core_tests tests/core_tests.cpp tests/flow_tests.cpp tests/passkey_tests.cpp tests/devicesso_tests.cpp tests/sso_flow_tests.cpp)
   target_link_libraries(atlas_core_tests PRIVATE atlas_core GTest::gtest_main OpenSSL::Crypto)
   target_compile_definitions(atlas_core_tests PRIVATE
     ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")

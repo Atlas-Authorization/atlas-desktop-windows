@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "fixture.hpp"
+#include "atlas/cli.hpp"
+
+#include <deque>
 
 using namespace atlas;
 using namespace t;
@@ -686,4 +689,134 @@ TEST(PasskeyEnrol, RefusedProofOrMissingPlatformSupportStopsBeforeTheAuthenticat
   fa.ok = true;
   r.http.down = true;
   EXPECT_EQ(enrollPasskey(*r.client, fa, "chl_totp", "k").error, "server unreachable");
+}
+
+// ---- command-line MFA (CliSession behind cliAuthenticate) ----
+
+namespace {
+struct CliRig {
+  Rig r;
+  std::vector<std::string> infos, sent;
+  std::deque<std::string> replies, answers;
+  std::unique_ptr<CliSession> session;
+  explicit CliRig(CliSession::Mode mode = CliSession::Mode::Gate, int maxPolls = 3, const std::string& why = "") {
+    session = std::make_unique<CliSession>(r.config, mode, why, r.gate.get(), CliSession::Who{"", "alice", "PC-1"},
+                                           [](const std::function<void()>& f) { f(); }, [](int) {}, maxPolls);
+  }
+  bool run(const std::string& service = "sshd") {
+    CliIo io;
+    io.send = [&](const std::string& l) {
+      sent.push_back(l);
+      session->handle(l, [&](const std::string& o) { replies.push_back(o); });
+      return true;
+    };
+    io.recv = [&](std::string& out, int) {
+      if (replies.empty()) return false;
+      out = replies.front();
+      replies.pop_front();
+      return true;
+    };
+    io.info = [&](const std::string& m) { infos.push_back(m); };
+    io.prompt = [&](const std::string&, bool, std::string& out) {
+      if (answers.empty()) return false;
+      out = answers.front();
+      answers.pop_front();
+      return true;
+    };
+    return cliAuthenticate(io, service);
+  }
+  std::string handle(const std::string& line) {
+    std::string last;
+    session->handle(line, [&](const std::string& o) { last = o; });
+    return last;
+  }
+};
+}  // namespace
+
+TEST(Cli, PushApprovedAllows) {
+  CliRig c;
+  c.r.server.pushStatus = "verified";
+  EXPECT_TRUE(c.run());
+  EXPECT_TRUE(c.session->allowed());
+  ASSERT_FALSE(c.infos.empty());
+  EXPECT_NE(c.infos[0].find("47"), std::string::npos);  // the number to pick is shown
+}
+
+TEST(Cli, PushNeverApprovedFallsBackToTheCode) {
+  CliRig c;
+  c.answers = {"123456"};
+  EXPECT_TRUE(c.run());
+}
+
+TEST(Cli, WrongCodesRefuseAfterThreeTries) {
+  CliRig c;
+  c.answers = {"000001", "000002", "000003"};
+  EXPECT_FALSE(c.run());
+  EXPECT_FALSE(c.session->allowed());
+}
+
+TEST(Cli, NonNumericInputIsNotSentToTheServer) {
+  CliRig c;
+  c.answers = {"abc", "12 456", "123456"};
+  EXPECT_TRUE(c.run());
+  for (auto& l : c.sent) EXPECT_TRUE(l.rfind("CODE ", 0) != 0 || l == "CODE 123456") << l;
+}
+
+TEST(Cli, OfflineWithPinAndCodeWhenTheServerIsDown) {
+  CliRig c;
+  ASSERT_EQ(c.r.sync->run(), SyncOutcome::Ok);  // fetches the offline bundle
+  c.r.http.down = true;
+  c.answers = {vectors()["pin"]["value"].get<std::string>(), "877905"};
+  EXPECT_TRUE(c.run());
+  CliRig d;
+  ASSERT_EQ(d.r.sync->run(), SyncOutcome::Ok);
+  d.r.http.down = true;
+  d.answers = {vectors()["pin"]["value"].get<std::string>(), "000000", vectors()["pin"]["value"].get<std::string>(), "000000", vectors()["pin"]["value"].get<std::string>(), "000000"};
+  EXPECT_FALSE(d.run());
+}
+
+TEST(Cli, NotRequiredAndBreakGlassAndPassthroughAllow) {
+  CliRig a;
+  a.r.server.required = false;
+  EXPECT_TRUE(a.run());
+  CliRig b;
+  b.r.config.breakGlassAccounts = {"alice"};
+  b.r.http.down = true;  // no network needed
+  EXPECT_TRUE(b.run());
+  EXPECT_EQ(b.r.http.log.size(), 0u);
+  CliRig p(CliSession::Mode::Passthrough, 3, "not enrolled");
+  EXPECT_TRUE(p.run());
+}
+
+TEST(Cli, BrokenInstallAndNeverSyncedFailClosed) {
+  CliRig broken(CliSession::Mode::Broken, 3, "device key missing");
+  EXPECT_FALSE(broken.run());
+  CliRig offline;
+  offline.r.http.down = true;  // never synced and unreachable
+  EXPECT_FALSE(offline.run());
+  EXPECT_FALSE(offline.session->allowed());
+}
+
+TEST(Cli, ProtocolMisuseIsRefused) {
+  CliRig c;
+  EXPECT_EQ(c.handle("CODE 123456"), "REJECT bad request");  // before BEGIN
+  CliRig d;
+  EXPECT_EQ(d.handle("BEGIN bad;service"), "DENY bad request");
+  CliRig e;
+  EXPECT_EQ(e.handle("BEGIN"), "DENY bad request");
+  CliRig f;
+  f.handle("BEGIN sshd");
+  EXPECT_EQ(f.handle("BEGIN sshd"), "DENY bad request");  // second BEGIN
+  EXPECT_EQ(f.handle("CODE 12345"), "REJECT bad request");
+  EXPECT_EQ(f.handle("OFFLINE 123 123456"), "REJECT bad request");
+  EXPECT_FALSE(f.session->allowed());
+}
+
+TEST(Cli, PasskeyOnlyPolicyHasNoConsoleFactor) {
+  CliRig c;
+  c.r.server.factors = json::array({"passkey"});
+  c.r.server.withBundle = false;
+  EXPECT_FALSE(c.run());
+  ASSERT_FALSE(c.infos.empty());
+  EXPECT_NE(c.infos[0].find("no usable factor"), std::string::npos);
 }

@@ -50,7 +50,7 @@ Bytes hkdfSha256(const Bytes& ikm, const Bytes& salt, const Bytes& info, size_t 
   return ok ? out : Bytes();
 }
 
-bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const Bytes& tag, Bytes& out) {
+bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const Bytes& tag, Bytes& out, const Bytes& aad) {
   if (key.size() != 32 || iv.empty() || tag.size() != 16) return false;
   EVP_CIPHER_CTX* c = EVP_CIPHER_CTX_new();
   bool ok = false;
@@ -59,6 +59,7 @@ bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const 
   if (c && EVP_DecryptInit_ex(c, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
       EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr) == 1 &&
       EVP_DecryptInit_ex(c, nullptr, nullptr, key.data(), iv.data()) == 1 &&
+      (aad.empty() || EVP_DecryptUpdate(c, nullptr, &n, aad.data(), static_cast<int>(aad.size())) == 1) &&
       EVP_DecryptUpdate(c, out.data(), &n, ct.data(), static_cast<int>(ct.size())) == 1) {
     total = n;
     if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_TAG, 16, const_cast<uint8_t*>(tag.data())) == 1 &&
@@ -70,6 +71,30 @@ bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const 
   EVP_CIPHER_CTX_free(c);
   if (!ok) { out.clear(); return false; }
   out.resize(static_cast<size_t>(total));
+  return true;
+}
+
+bool aes256GcmEncrypt(const Bytes& key, const Bytes& iv, const Bytes& pt, Bytes& ct, Bytes& tag, const Bytes& aad) {
+  if (key.size() != 32 || iv.empty()) return false;
+  EVP_CIPHER_CTX* c = EVP_CIPHER_CTX_new();
+  bool ok = false;
+  ct.assign(pt.size() + 16, 0);
+  tag.assign(16, 0);
+  int n = 0, total = 0;
+  if (c && EVP_EncryptInit_ex(c, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
+      EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr) == 1 &&
+      EVP_EncryptInit_ex(c, nullptr, nullptr, key.data(), iv.data()) == 1 &&
+      (aad.empty() || EVP_EncryptUpdate(c, nullptr, &n, aad.data(), static_cast<int>(aad.size())) == 1) &&
+      EVP_EncryptUpdate(c, ct.data(), &n, pt.data(), static_cast<int>(pt.size())) == 1) {
+    total = n;
+    if (EVP_EncryptFinal_ex(c, ct.data() + total, &n) == 1 && EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_GET_TAG, 16, tag.data()) == 1) {
+      total += n;
+      ok = true;
+    }
+  }
+  EVP_CIPHER_CTX_free(c);
+  if (!ok) { ct.clear(); tag.clear(); return false; }
+  ct.resize(static_cast<size_t>(total));
   return true;
 }
 
@@ -142,6 +167,33 @@ Bytes derToP1363(const Bytes& der) {
 }
 
 }  // namespace detail
+
+bool rsaVerifyPkcs1Sha256(const Bytes& n, const Bytes& e, const Bytes& message, const Bytes& signature) {
+  if (n.size() < 256 || n.size() > 1024 || e.empty() || e.size() > 8 || signature.size() != n.size()) return false;  // RSA >= 2048 bits only
+  BIGNUM* bn = BN_bin2bn(n.data(), static_cast<int>(n.size()), nullptr);
+  BIGNUM* be = BN_bin2bn(e.data(), static_cast<int>(e.size()), nullptr);
+  OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+  OSSL_PARAM* params = nullptr;
+  EVP_PKEY_CTX* kctx = nullptr;
+  EVP_PKEY* pkey = nullptr;
+  bool ok = false;
+  if (bn && be && bld && OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_N, bn) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_E, be) == 1 && (params = OSSL_PARAM_BLD_to_param(bld)) &&
+      (kctx = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)) && EVP_PKEY_fromdata_init(kctx) == 1 &&
+      EVP_PKEY_fromdata(kctx, &pkey, EVP_PKEY_PUBLIC_KEY, params) == 1) {
+    EVP_MD_CTX* md = EVP_MD_CTX_new();
+    ok = md && EVP_DigestVerifyInit(md, nullptr, EVP_sha256(), nullptr, pkey) == 1 &&
+         EVP_DigestVerify(md, signature.data(), signature.size(), message.data(), message.size()) == 1;
+    EVP_MD_CTX_free(md);
+  }
+  EVP_PKEY_free(pkey);
+  EVP_PKEY_CTX_free(kctx);
+  OSSL_PARAM_free(params);
+  OSSL_PARAM_BLD_free(bld);
+  BN_free(bn);
+  BN_free(be);
+  return ok;
+}
 
 bool ecdsaVerifyP1363(const json& publicJwk, const Bytes& message, const Bytes& signature) {
   if (signature.size() != 64) return false;

@@ -26,6 +26,13 @@ std::string b64uEncode(const Bytes& b) {
 }
 std::string b64uEncode(const std::string& s) { return b64uEncode(toBytes(s)); }
 
+std::string b64Encode(const Bytes& b) {
+  std::string out = b64uEncode(b);
+  for (char& c : out) c = c == '-' ? '+' : c == '_' ? '/' : c;
+  while (out.size() % 4) out += '=';
+  return out;
+}
+
 std::optional<Bytes> b64uDecode(const std::string& s) {
   if (s.size() % 4 == 1) return std::nullopt;
   Bytes out;
