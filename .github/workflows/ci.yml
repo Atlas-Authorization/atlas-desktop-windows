@@ -49,6 +49,9 @@ jobs:
       - name: Prepare cache dir
         shell: pwsh
         run: New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Configure (vcpkg manifest)
         shell: pwsh
         run: |
