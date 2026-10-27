@@ -24,18 +24,16 @@ std::unique_ptr<CngDeviceKey> CngDeviceKey::open(const std::wstring& name) {
   return nullptr;
 }
 
-std::unique_ptr<CngDeviceKey> CngDeviceKey::create(const std::wstring& name, bool& hardware, std::string& err) {
+std::unique_ptr<CngDeviceKey> CngDeviceKey::create(const std::wstring& name, KeyKind kind, bool& hardware, std::string& err) {
   hardware = false;
   for (const wchar_t* prov : kProviders) {
     NCRYPT_PROV_HANDLE p = 0;
     if (NCryptOpenStorageProvider(&p, prov, 0) != ERROR_SUCCESS) continue;
     NCRYPT_KEY_HANDLE k = 0;
-    SECURITY_STATUS st = NCryptCreatePersistedKey(p, &k, BCRYPT_ECDSA_P256_ALGORITHM, name.c_str(), 0,
+    SECURITY_STATUS st = NCryptCreatePersistedKey(p, &k, kind == KeyKind::Signing ? BCRYPT_ECDSA_P256_ALGORITHM : BCRYPT_ECDH_P256_ALGORITHM, name.c_str(), 0,
                                                   kMachine | NCRYPT_OVERWRITE_KEY_FLAG);
     if (st == ERROR_SUCCESS) {
-      // The protocol needs ONE key that signs (ES256) and agrees keys (ECDH). A provider that refuses the
-      // combined usage is skipped, so a sign-only TPM key is never enrolled by accident.
-      DWORD usage = NCRYPT_ALLOW_SIGNING_FLAG | NCRYPT_ALLOW_KEY_AGREEMENT_FLAG;
+      DWORD usage = kind == KeyKind::Signing ? NCRYPT_ALLOW_SIGNING_FLAG : NCRYPT_ALLOW_KEY_AGREEMENT_FLAG;
       st = NCryptSetProperty(k, NCRYPT_KEY_USAGE_PROPERTY, reinterpret_cast<PBYTE>(&usage), sizeof usage,
                              NCRYPT_PERSIST_FLAG);
       if (st == ERROR_SUCCESS) st = NCryptFinalizeKey(k, 0);

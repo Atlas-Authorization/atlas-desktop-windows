@@ -38,7 +38,7 @@ struct BundlePlain {
 };
 
 // ECIES open per PROTOCOL.md. nullopt on any structural, ECDH or AES-GCM failure.
-std::optional<BundlePlain> openBundle(IDeviceKey& key, const std::string& sealed);
+std::optional<BundlePlain> openBundle(ISealKey& key, const std::string& sealed);
 bool verifyPin(const std::string& pin, const PinVerifier& v);
 
 std::string totpCode(const std::string& base32Secret, int64_t unixSeconds, int digits = 6, int period = 30);
@@ -63,7 +63,7 @@ class OfflineVault {
   static constexpr int64_t kClockSlackMs = 5 * 60 * 1000;
   static constexpr size_t kMaxQueuedEvents = 1000;
 
-  OfflineVault(ISecretStore& store, IClock& clock, IDeviceKey& key, std::string deviceId);
+  OfflineVault(ISecretStore& store, IClock& clock, ISealKey& key, std::string deviceId);
 
   // Verifies the MAC against the stored mac key before storing. False (and nothing stored) otherwise.
   bool storeBundle(const Bundle& b);
@@ -90,7 +90,7 @@ class OfflineVault {
 
   ISecretStore& store_;
   IClock& clock_;
-  IDeviceKey& key_;
+  ISealKey& key_;
   std::string deviceId_;
 };
 

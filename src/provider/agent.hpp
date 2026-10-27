@@ -16,7 +16,8 @@ struct Agent {
   DpapiStore store;
   atlas::SystemClock clock;
   WinHttpClient http;
-  std::unique_ptr<CngDeviceKey> key;
+  std::unique_ptr<CngDeviceKey> key;      // signing key
+  std::unique_ptr<CngDeviceKey> sealKey;  // optional; absent = bundles are sealed to the signing key (not possible with a CNG ECDSA key)
   std::unique_ptr<atlas::Client> client;
   std::unique_ptr<atlas::OfflineVault> vault;
   std::unique_ptr<atlas::SyncService> sync;
@@ -32,5 +33,6 @@ AgentState loadAgent(std::shared_ptr<Agent>& out, std::string& why);
 atlas::ConfigParse readConfigFile();
 bool writeConfigFile(const atlas::Config& c);
 std::wstring keyNameFor(const atlas::Config& c);
+std::wstring sealKeyNameFor(const atlas::Config& c);
 
 }  // namespace win

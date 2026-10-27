@@ -10,7 +10,7 @@ std::string Config::baseUrl() const {
 
 json Config::toJson() const {
   return {{"instance_url", instanceUrl}, {"publishable_key", publishableKey}, {"instance_id", instanceId},
-          {"device_id", deviceId}, {"device_key_id", deviceKeyId}, {"enrolled", enrolled},
+          {"device_id", deviceId}, {"device_key_id", deviceKeyId}, {"seal_key_id", sealKeyId}, {"enrolled", enrolled},
           {"fail_open_when_never_synced", failOpenWhenNeverSynced}};
 }
 
@@ -34,7 +34,7 @@ ConfigParse parseConfig(const std::string& text) {
   Config c;
   if (!str("instance_url", true, c.instanceUrl) || !str("publishable_key", true, c.publishableKey) ||
       !str("instance_id", true, c.instanceId) || !str("device_id", false, c.deviceId) ||
-      !str("device_key_id", false, c.deviceKeyId) || !boolean("enrolled", c.enrolled) ||
+      !str("device_key_id", false, c.deviceKeyId) || !str("seal_key_id", false, c.sealKeyId) || !boolean("enrolled", c.enrolled) ||
       !boolean("fail_open_when_never_synced", c.failOpenWhenNeverSynced))
     return r;
   if (c.instanceUrl.rfind("https://", 0) != 0 || c.instanceUrl.size() <= 8) { r.error = "instance_url must be an https:// URL"; return r; }

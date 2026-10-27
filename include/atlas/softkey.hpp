@@ -6,7 +6,8 @@ struct evp_pkey_st;
 
 namespace atlas {
 
-class SoftwareDeviceKey : public IDeviceKey {
+// Implements both roles: used as the signing key, the seal key, or both (as the shared vector does).
+class SoftwareDeviceKey : public IDeviceKey, public ISealKey {
  public:
   static std::unique_ptr<SoftwareDeviceKey> generate();
   // jwk must carry the private scalar `d`.

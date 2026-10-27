@@ -5,6 +5,7 @@ namespace atlas {
 
 struct Config {
   std::string instanceUrl, publishableKey, instanceId, deviceId, deviceKeyId;
+  std::string sealKeyId;  // optional second (ECDH) key label; empty = bundles are sealed to the signing key
   bool enrolled = false;
   bool failOpenWhenNeverSynced = false;
 

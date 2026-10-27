@@ -94,10 +94,19 @@ stock password provider. Details, Safe Mode behaviour, the break-glass options a
 load are in [installer/ROLLBACK.md](installer/ROLLBACK.md). Short version: keep the stock password tile available
 (the default) until you have proven the kill switch on a test PC.
 
+## Signing
+
+Release binaries need an Authenticode code-signing certificate (EV preferred, private key on an HSM or token, so
+usually a cloud signing service rather than a `.pfx`), a timestamp server, and the same certificate for the MSI and
+the DLL and EXEs inside it. See [SIGNING.md](SIGNING.md). Customers using WDAC allow-list your publisher certificate.
+Unsigned builds are named `-unsigned` and are for lab use.
+
 ## Security notes
 
-- The device key is created non-exportable, machine scope. TPM is used when the platform provider accepts a key
-  that both signs and agrees keys; otherwise the software KSP is used and `atlas-enroll` says so.
+- Two device keys are created, non-exportable, machine scope: an ECDSA P-256 signing key and an ECDH P-256 seal key.
+  The public half of the seal key is sent at enrolment as `seal_public_key`, and the server then seals offline
+  bundles to it. Each key uses the TPM when available, otherwise the software KSP, and `atlas-enroll` says which.
+  Their labels are stored in `config.json` (`device_key_id`, `seal_key_id`).
 - The bundle MAC key and the sealed offline bundle are DPAPI machine-scope blobs. Machine scope means any
   process on the PC can decrypt them, so the folder ACL (SYSTEM + Administrators) is the real boundary.
 - Secrets (codes, PINs, number matches, bundles, keys) are never logged.
@@ -109,8 +118,7 @@ load are in [installer/ROLLBACK.md](installer/ROLLBACK.md). Short version: keep 
 ## Known gaps and what is unverified
 
 - Everything under `src/provider` and `installer/` has not been compiled or run on Windows.
-- One CNG key must both sign (ES256) and do ECDH. Many TPMs expose signing and key-agreement keys separately, so
-  expect the software KSP in practice until this is tested on real hardware.
+- Whether the TPM provider accepts a persisted ECDH P-256 key on every device; the software KSP is the fallback.
 - `BCRYPT_KDF_RAW_SECRET` output is little-endian; the code reverses it to the big-endian X coordinate the
   protocol needs. Verify against a real sealed bundle on hardware.
 - The provider updates fields from a background thread (push polling). Confirm LogonUI tolerates this on all

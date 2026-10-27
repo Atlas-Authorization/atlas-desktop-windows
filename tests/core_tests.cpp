@@ -186,6 +186,14 @@ TEST(Totp, WindowAndReplay) {
 
 // ---- config ----
 
+TEST(Config, SealKeyIdOptional) {
+  auto c = parseConfig(R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i","seal_key_id":"seal-1"})");
+  ASSERT_TRUE(c.config);
+  EXPECT_EQ(c.config->sealKeyId, "seal-1");
+  EXPECT_EQ(parseConfig(c.config->toJson().dump()).config->sealKeyId, "seal-1");
+  EXPECT_TRUE(parseConfig(R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i"})").config->sealKeyId.empty());
+}
+
 TEST(Config, ParsesAndValidates) {
   auto ok = parseConfig(R"({"instance_url":"https://auth.example.com/","publishable_key":"pk","instance_id":"ins_1",
     "device_id":"ddv_1","device_key_id":"k","enrolled":true,"fail_open_when_never_synced":true})");

@@ -41,6 +41,13 @@ struct IDeviceKey {
   virtual ~IDeviceKey() = default;
   // ECDSA P-256 over SHA-256 of `message`; returns 64 bytes r||s. Empty on failure.
   virtual Bytes sign(const Bytes& message) = 0;
+  virtual json publicJwk() = 0;
+};
+
+// The ECDH key offline bundles are sealed to. Enrolment sends its public JWK as `seal_public_key`;
+// when the install has no separate seal key the signing key doubles as one (software key, legacy path).
+struct ISealKey {
+  virtual ~ISealKey() = default;
   // ECDH with an uncompressed peer point (0x04||X||Y); returns the 32-byte X coordinate (big endian). Empty on failure.
   virtual Bytes ecdh(const Bytes& peerUncompressedPoint) = 0;
   virtual json publicJwk() = 0;

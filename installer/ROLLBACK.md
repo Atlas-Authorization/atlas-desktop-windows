@@ -38,7 +38,7 @@ Use one of these, decided by your policy owner:
 
 ## Fail-closed behaviour to know about
 
-- An enrolled PC whose config is corrupt or whose device key is missing refuses sign-in (message on the screen);
+- An enrolled PC whose config is corrupt or whose signing or seal key is missing refuses sign-in (message on the screen);
   use the kill switch or reinstall.
 - A PC that has never synced refuses sign-in unless it was installed with `FAIL_OPEN_WHEN_NEVER_SYNCED=1`.
 - A PC with no `config.json` or `enrolled: false` behaves exactly like stock Windows.
@@ -47,5 +47,5 @@ Use one of these, decided by your policy owner:
 
 Uninstalling removes the files, the COM registration, the Credential Providers entry, the policy exclusion
 (if the installer set it) and the sync task. `%ProgramData%\Atlas` (config and DPAPI-protected secrets) and the
-device key are left in place; delete the folder and the CNG key named
-`AtlasLoginAgent-<instance id>` if you want them gone.
+device keys are left in place; delete the folder and the CNG keys named
+`AtlasLoginAgent-<instance id>` and `AtlasLoginAgent-seal-<instance id>` if you want them gone.

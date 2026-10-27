@@ -106,17 +106,20 @@ struct Rig {
   MockHttp http;
   MemorySecretStore store;
   TestClock clock;
-  std::unique_ptr<SoftwareDeviceKey> key = vectorKey();
+  // Separate keys: signing is freshly generated; offline bundles are sealed to the vector key (the seal key).
+  std::unique_ptr<SoftwareDeviceKey> key = SoftwareDeviceKey::generate();
+  std::unique_ptr<SoftwareDeviceKey> seal = vectorKey();
   std::unique_ptr<Client> client;
   std::unique_ptr<OfflineVault> vault;
   std::unique_ptr<SyncService> sync;
   std::unique_ptr<LoginGate> gate;
 
   explicit Rig(bool failOpen = false, bool withMacKey = true) : config(cfg(failOpen)) {
+    server.pub = key->publicJwk();
     http.handler = [this](const std::string& p, const json& b) { return server.handle(p, b); };
     if (withMacKey) putString(store, "mac_key", vectors()["mac_key_b64u"]);
     client = std::make_unique<Client>(config, *key, http);
-    vault = std::make_unique<OfflineVault>(store, clock, *key, "ddv_TESTVECTOR");
+    vault = std::make_unique<OfflineVault>(store, clock, *seal, "ddv_TESTVECTOR");
     sync = std::make_unique<SyncService>(config, *client, *vault, store, clock);
     gate = std::make_unique<LoginGate>(config, *client, *sync, *vault, store);
   }
@@ -145,15 +148,17 @@ TEST(Client, EnrollSignsCodeWithJwkX) {
   bool signedOk = false;
   r.http.handler = [&](const std::string& p, const json& b) {
     EXPECT_EQ(p, "enroll");
-    std::string m = signedMessage("enroll", "ins_TESTVECTOR", vectors()["device_public_jwk"]["x"], "CODE-1");
+    std::string m = signedMessage("enroll", "ins_TESTVECTOR", r.key->publicJwk()["x"], "CODE-1");
     signedOk = ecdsaVerifyP1363(b["public_key"], toBytes(m), *b64uDecode(b["signature"]));
     EXPECT_EQ(b["platform"], "windows");
+    EXPECT_EQ(b["seal_public_key"], r.seal->publicJwk());
+    EXPECT_NE(b["seal_public_key"], b["public_key"]);
     EXPECT_EQ(b["pin"], "24681357");
     return reply(201, {{"device", {{"id", "ddv_NEW"}}}, {"bundle_mac_key", vectors()["mac_key_b64u"]},
                        {"offline_otp_uri", "otpauth://totp/x"}});
   };
   MemorySecretStore st;
-  auto res = enrollDevice(r.config, *r.key, r.http, st, "CODE-1", "24681357", "host", "windows", "0.1.0");
+  auto res = enrollDevice(r.config, *r.key, r.http, st, "CODE-1", "24681357", "host", "windows", "0.1.0", r.seal.get());
   EXPECT_TRUE(signedOk);
   ASSERT_TRUE(res.ok) << res.error;
   EXPECT_EQ(r.config.deviceId, "ddv_NEW");
@@ -466,4 +471,27 @@ TEST(Gate, UnenrolledIsDeniedByTheCoreCallerDecidesPassthrough) {
   Rig r;
   r.config.enrolled = false;
   EXPECT_EQ(r.gate->begin().reason, "not_enrolled");
+}
+
+TEST(Client, EnrollWithoutSealKeyOmitsField) {
+  Rig r;
+  r.config.enrolled = false;
+  bool absent = false;
+  r.http.handler = [&](const std::string&, const json& b) {
+    absent = !b.contains("seal_public_key");
+    return reply(201, {{"device", {{"id", "ddv_NEW"}}}, {"bundle_mac_key", vectors()["mac_key_b64u"]}});
+  };
+  MemorySecretStore st;
+  EXPECT_TRUE(enrollDevice(r.config, *r.key, r.http, st, "C", "", "h", "windows", "v").ok);
+  EXPECT_TRUE(absent);
+}
+
+TEST(Gate, OfflineOpensWithSealKeyNotSigningKey) {
+  Rig r;
+  r.gate->begin();
+  r.http.down = true;
+  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::Required);
+  // A vault wired to the signing key (the wrong key) cannot open a bundle sealed to the seal key.
+  OfflineVault wrong(r.store, r.clock, *r.key, "ddv_TESTVECTOR");
+  EXPECT_EQ(wrong.status(), OfflineResult::BundleInvalid);
 }

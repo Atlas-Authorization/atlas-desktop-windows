@@ -54,13 +54,15 @@ ApiResult Client::signedCall(const std::string& path, const std::string& purpose
 }
 
 ApiResult Client::enroll(const std::string& code, const std::string& pin, const std::string& hostname,
-                         const std::string& platform, const std::string& agentVersion) {
+                         const std::string& platform, const std::string& agentVersion,
+                         const std::optional<json>& sealPublicKey) {
   json jwk = key_.publicJwk();
   Bytes sig = key_.sign(toBytes(signedMessage("enroll", cfg_.instanceId, jwk.value("x", ""), code)));
   if (sig.size() != 64) return {};
   json body = {{"code", code}, {"public_key", jwk}, {"signature", b64uEncode(sig)}, {"hostname", hostname},
                {"platform", platform}, {"agent_version", agentVersion}};
   if (!pin.empty()) body["pin"] = pin;
+  if (sealPublicKey) body["seal_public_key"] = *sealPublicKey;
   return post("enroll", body);
 }
 
@@ -176,10 +178,12 @@ SyncOutcome SyncService::run() {
 
 EnrollResult enrollDevice(Config& cfg, IDeviceKey& key, IHttpClient& http, ISecretStore& store, const std::string& code,
                           const std::string& pin, const std::string& hostname, const std::string& platform,
-                          const std::string& agentVersion) {
+                          const std::string& agentVersion, ISealKey* sealKey) {
   EnrollResult out;
   Client c(cfg, key, http);
-  ApiResult r = c.enroll(code, pin, hostname, platform, agentVersion);
+  std::optional<json> sealPub;
+  if (sealKey) sealPub = sealKey->publicJwk();
+  ApiResult r = c.enroll(code, pin, hostname, platform, agentVersion, sealPub);
   if (r.status == 0) { out.error = "server unreachable"; return out; }
   if (!r.ok()) { out.error = r.errorCode().empty() ? "enrolment refused (" + std::to_string(r.status) + ")" : r.errorCode(); return out; }
   try {

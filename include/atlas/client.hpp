@@ -23,7 +23,8 @@ class Client {
   Client(const Config& cfg, IDeviceKey& key, IHttpClient& http) : cfg_(cfg), key_(key), http_(http) {}
 
   ApiResult enroll(const std::string& code, const std::string& pin, const std::string& hostname,
-                   const std::string& platform, const std::string& agentVersion);
+                   const std::string& platform, const std::string& agentVersion,
+                   const std::optional<json>& sealPublicKey = std::nullopt);
   ApiResult sync(const std::string& heldBundleId);
   ApiResult setPin(const std::string& pin);
   ApiResult startChallenge(const std::string& factor);
@@ -82,6 +83,6 @@ struct EnrollResult {
 // Enrols, persists the bundle MAC key, and updates cfg (device_id, enrolled). The caller writes the config file.
 EnrollResult enrollDevice(Config& cfg, IDeviceKey& key, IHttpClient& http, ISecretStore& store, const std::string& code,
                           const std::string& pin, const std::string& hostname, const std::string& platform,
-                          const std::string& agentVersion);
+                          const std::string& agentVersion, ISealKey* sealKey = nullptr);
 
 }  // namespace atlas

@@ -16,6 +16,7 @@ bool writeConfigFile(const atlas::Config& c) {
 }
 
 std::wstring keyNameFor(const atlas::Config& c) { return L"AtlasLoginAgent-" + toWide(c.instanceId); }
+std::wstring sealKeyNameFor(const atlas::Config& c) { return L"AtlasLoginAgent-seal-" + toWide(c.instanceId); }
 
 AgentState loadAgent(std::shared_ptr<Agent>& out, std::string& why) {
   if (killSwitchOn()) { why = "disabled"; return AgentState::Passthrough; }
@@ -28,8 +29,15 @@ AgentState loadAgent(std::shared_ptr<Agent>& out, std::string& why) {
   a->cfg = *parsed.config;
   a->key = CngDeviceKey::open(toWide(a->cfg.deviceKeyId));
   if (!a->key) { why = "device key missing"; return AgentState::Broken; }
+  if (!a->cfg.sealKeyId.empty()) {
+    a->sealKey = CngDeviceKey::open(toWide(a->cfg.sealKeyId));
+    if (!a->sealKey) { why = "seal key missing"; return AgentState::Broken; }
+  }
+  // A CNG ECDSA key cannot do ECDH, so without a seal key offline bundles cannot be opened: the vault then
+  // gets the signing key, ecdh() fails, and offline unlock is refused (online factors still work).
+  atlas::ISealKey& seal = a->sealKey ? static_cast<atlas::ISealKey&>(*a->sealKey) : static_cast<atlas::ISealKey&>(*a->key);
   a->client = std::make_unique<atlas::Client>(a->cfg, *a->key, a->http);
-  a->vault = std::make_unique<atlas::OfflineVault>(a->store, a->clock, *a->key, a->cfg.deviceId);
+  a->vault = std::make_unique<atlas::OfflineVault>(a->store, a->clock, seal, a->cfg.deviceId);
   a->sync = std::make_unique<atlas::SyncService>(a->cfg, *a->client, *a->vault, a->store, a->clock);
   out = a;
   return AgentState::Ready;

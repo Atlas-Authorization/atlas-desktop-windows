@@ -42,7 +42,7 @@ bool bundleMacOk(const Bytes& macKey, const std::string& deviceId, const Bundle&
   return ctEqual(bundleMac(macKey, deviceId, b), b.mac);
 }
 
-std::optional<BundlePlain> openBundle(IDeviceKey& key, const std::string& sealed) {
+std::optional<BundlePlain> openBundle(ISealKey& key, const std::string& sealed) {
   auto rawOpt = b64uDecode(sealed);
   // 1 version + 65 point + 12 iv + 16 tag minimum
   if (!rawOpt || rawOpt->size() < 1 + 65 + 12 + 16 || (*rawOpt)[0] != 0x01 || (*rawOpt)[1] != 0x04) return std::nullopt;
@@ -124,7 +124,7 @@ std::optional<int64_t> totpMatch(const std::string& secret, const std::string& c
 
 // ---- OfflineVault ----
 
-OfflineVault::OfflineVault(ISecretStore& store, IClock& clock, IDeviceKey& key, std::string deviceId)
+OfflineVault::OfflineVault(ISecretStore& store, IClock& clock, ISealKey& key, std::string deviceId)
     : store_(store), clock_(clock), key_(key), deviceId_(std::move(deviceId)) {}
 
 OfflineVault::State OfflineVault::load() {

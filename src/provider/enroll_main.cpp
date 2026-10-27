@@ -64,10 +64,13 @@ int wmain(int argc, wchar_t** argv) {
   if (code.empty()) { std::fprintf(stderr, "an enrolment code is required\n"); return 64; }
 
   std::wstring keyName = win::keyNameFor(cfg);
-  bool hardware = false;
+  std::wstring sealName = win::sealKeyNameFor(cfg);
+  bool hardware = false, sealHardware = false;
   std::string err;
-  auto key = win::CngDeviceKey::create(keyName, hardware, err);
-  if (!key) { std::fprintf(stderr, "could not create the device key (%s)\n", err.c_str()); return 4; }
+  auto key = win::CngDeviceKey::create(keyName, win::KeyKind::Signing, hardware, err);
+  if (!key) { std::fprintf(stderr, "could not create the signing key (%s)\n", err.c_str()); return 4; }
+  auto seal = win::CngDeviceKey::create(sealName, win::KeyKind::Seal, sealHardware, err);
+  if (!seal) { key->deleteKey(); std::fprintf(stderr, "could not create the seal key (%s)\n", err.c_str()); return 4; }
 
   wchar_t host[MAX_COMPUTERNAME_LENGTH + 1] = {};
   DWORD hl = MAX_COMPUTERNAME_LENGTH + 1;
@@ -75,15 +78,18 @@ int wmain(int argc, wchar_t** argv) {
 
   win::DpapiStore store;
   win::WinHttpClient http;
-  auto res = atlas::enrollDevice(cfg, *key, http, store, code, pin, win::toUtf8(host), "windows", "0.1.0");
+  auto res = atlas::enrollDevice(cfg, *key, http, store, code, pin, win::toUtf8(host), "windows", "0.1.0", seal.get());
   if (!res.ok) {
     key->deleteKey();
+    seal->deleteKey();
     std::fprintf(stderr, "enrolment failed: %s\n", res.error.c_str());
     return 5;
   }
   cfg.deviceKeyId = win::toUtf8(keyName);
+  cfg.sealKeyId = win::toUtf8(sealName);
   if (!win::writeConfigFile(cfg)) { std::fprintf(stderr, "enrolled, but the config file could not be written\n"); return 6; }
-  std::printf("Enrolled. Device key is %s.\n", hardware ? "held in the TPM" : "held in the software key store (no TPM key available)");
+  std::printf("Enrolled. Signing key: %s. Seal key: %s.\n", hardware ? "TPM" : "software key store",
+              sealHardware ? "TPM" : "software key store");
   if (showUri && !res.offlineOtpUri.empty())
     std::printf("Offline authenticator URI (shown once, add it to your authenticator app):\n%s\n", res.offlineOtpUri.c_str());
 
