@@ -17,6 +17,8 @@ password serialization is released to Windows only after the step succeeds.
 | `atlas_credential_provider.dll` | `src/provider/provider.cpp` | COM credential provider wrapping `{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}`. UI glue only. |
 | `atlas-enroll.exe` | `src/provider/enroll_main.cpp` | One-time enrolment (creates the device key, calls `enroll`, writes the config and secrets). |
 | `atlas-sync.exe` | `src/provider/sync_main.cpp` | Refreshes policy and the offline bundle, uploads queued offline events. Run by a scheduled task. |
+| `atlas-cli-mfa.exe` + `AtlasCliMfa` service | `src/provider/cli_mfa_main.cpp`, `cli_pipe.*`, `src/core/cli.cpp` | Second factor for OpenSSH for Windows and PowerShell (below). |
+| `atlas-sso-broker.exe`, `atlas-sso-native-host.exe` | `src/provider/sso_*.cpp`, `src/core/devicesso.cpp` | Device-bound SSO (below). |
 | Installer | `installer/` | WiX v4 MSI, `build.ps1`, registry helpers, rollback notes. |
 
 The wire protocol is in [PROTOCOL.md](PROTOCOL.md). The unit tests reproduce the reference vectors in
@@ -52,6 +54,61 @@ DPAPI machine-scope files in `%ProgramData%\Atlas\secrets` restricted to SYSTEM 
 - A bundle whose MAC does not verify is never stored or opened.
 - Enrolled but with a broken config or missing device key: refused with a message. Not enrolled / no config: stock behaviour.
 - Passkeys (security keys): only through the platform WebAuthn API, only when the server allows the `passkey` factor and a key answers; a malformed option set (origin not `https://<rp id>`, short challenge) never reaches the authenticator.
+
+## Command-line MFA (OpenSSH, PowerShell)
+
+The credential provider only covers the sign-in screen. For command lines, `atlas-cli-mfa.exe` runs the same `LoginGate` (same config,
+offline bundle, break-glass accounts, fail-closed rules) behind a LocalSystem service `AtlasCliMfa`:
+
+- The device keys, the offline bundle and the config are readable only by SYSTEM and Administrators, so the user-run clients hold nothing.
+  They talk to the service over the named pipe `\\.\pipe\AtlasCliMfa` (local clients only). **The service takes the user from the pipe
+  (`ImpersonateNamedPipeClient`), never from the request**; `check --user X` is refused unless X is the signed-in user.
+- `atlas-cli-mfa.exe check [--service NAME]` asks on the console: push with number matching, authenticator code, or the offline PIN and
+  code. Exit 0 allowed, 1 refused, 2 service missing or install broken (refused). The kill switch (`HKLM\SOFTWARE\Atlas\LoginAgent\Disabled`)
+  lets it pass with a warning, like the provider.
+- `atlas-cli-mfa.exe ssh-wrap` is an sshd `ForceCommand`: sshd always runs it whatever the client asked for, the factor runs first, and the
+  client's command (`SSH_ORIGINAL_COMMAND`) is handed to the shell only after it passed. `installer/enable-sshd-mfa.ps1` adds a marked block
+  to `sshd_config` (backs up, runs `sshd -t`, restores on failure; `-ExcludeUsers` for break-glass, `-Remove` to undo).
+- PowerShell: `Import-Module AtlasMfa`; `Invoke-AtlasMfa` throws when refused; `Enter-AtlasElevation` asks for the factor and then starts an
+  elevated process.
+
+Limits, stated plainly: **passkeys need a window**, so a command line offers push, code and offline only. **Non-interactive sessions**
+(scp, sftp, `ssh host cmd` without a tty) can use push (it needs no typing) but not codes. **`Enter-AtlasElevation` is a workflow guard**,
+not enforcement: Windows lets a third party add nothing to the UAC consent prompt, and anyone can run `Start-Process -Verb RunAs` directly.
+Key-based ssh logins still run the factor because `ForceCommand` runs after authentication; password+factor ordering is therefore
+"password (or key) first, factor second".
+
+## Device-bound SSO (a Primary Refresh Token style session, from Atlas)
+
+`atlas-sso-broker.exe` gives the signed-in Windows user a session bound to this device, speaking the protocol in
+[`../DEVICE_SSO.md`](../DEVICE_SSO.md) (Apple's Platform SSO identity-provider wire format, so macOS and Windows share one server side):
+
+1. `register --code <registration code>` creates three per-user CNG keys (device signing key and ECDH encryption key, non-exportable, in the TPM
+   when the user can reach it, and a user key that asks Windows for consent on each use) and registers them. An administrator issues the code
+   (`POST /v1/desktop_mfa/enrolment_codes`).
+2. `login` signs a login request with the device key and an embedded assertion with the user key. The answer is a JWE encrypted to the device
+   encryption key (ECDH-ES, Concat KDF, A256GCM; tested against Apple's published vector); the id_token inside is verified against the instance JWKS.
+3. `refresh` rotates the refresh token with the device key only; reuse of an old token revokes the family server-side.
+4. Browsers: `atlas-sso-native-host.exe` is a native-messaging host (Chrome, Edge, Firefox). `browser-extension/` is a reference extension that asks
+   it for a completed sign-in (`redirect_to`) for the page being opened; the host never returns a refresh token.
+5. Two per-user scheduled tasks (`Atlas\DeviceSsoLogon`, `Atlas\DeviceSsoRefresh`) keep the session fresh. `status` and `logout` are there for support.
+
+### What Windows and Microsoft do not allow (and what this is instead)
+
+- **This is not an Entra Primary Refresh Token and cannot become one.** Microsoft: a PRT "is a secure artifact specially issued to Microsoft
+  first party token brokers", and "We don't support non-Microsoft credential providers for issuance and renewal of Microsoft Entra PRTs"
+  ([Primary Refresh Token](https://learn.microsoft.com/en-us/entra/identity/devices/concept-primary-refresh-token)). Windows' own SSO
+  (Web Account Manager, browser SSO through `GetCookieInfoForUri`) is wired to that PRT and Entra device registration; an outside IdP cannot make
+  Windows treat its session as the machine's primary credential.
+- **Windows sign-in is not changed.** The user still signs in to Windows with its own credential (the Atlas credential provider adds the second
+  factor there). Atlas does not become the authority for the Windows logon session, and does not provide Kerberos tickets or Windows Hello for
+  Business cloud trust ([how Windows Hello for Business authentication works](https://learn.microsoft.com/en-us/windows/security/identity-protection/hello-for-business/how-it-works-authentication)).
+- **The user key is a CNG key with a consent prompt, not a Windows Hello for Business credential.** WHfB credentials are created by Windows' own
+  provisioning flow against Entra/AD. We use `NCRYPT_UI_POLICY` (a Windows consent dialog on every use). A TPM provider that refuses a UI policy
+  makes the broker fall back to the software key store for that key only (the device keys keep preferring the TPM); `register` reports which one it got.
+  The browser step is a ticket the Atlas JS SDK exchanges for cookies, not Microsoft's PRT cookie.
+- What you do get: sign-in to Atlas-protected apps with no password prompt, bound to this device's non-exportable key plus a user-presence
+  gesture, revocable per device, and readable by conditional access as a device-bound session (`amr` contains `dbs`).
 
 ## Security keys (passkeys) at sign-in
 

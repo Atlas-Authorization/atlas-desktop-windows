@@ -1,7 +1,8 @@
 // atlas-sso-native-host.exe: browser native-messaging host (Chrome, Edge, Firefox). The reference extension asks it for a one-time
 // sign-in URL for the Atlas instance; the host answers from the current user's device-bound session and never returns a token.
-//   in : { "type": "get_ticket" }   (stdin: 4-byte little-endian length, then UTF-8 JSON)
-//   out: { "ok": true, "ticket_url": "https://..." } | { "ok": false, "error": "login_required" | ... }
+//   in : { "type": "get_ticket", "redirect_url": "https://app/..." }   (stdin: 4-byte little-endian length, then UTF-8 JSON; redirect_url optional)
+//   out: { "ok": true, "redirect_to": "https://app/...?__atlas_attempt=..&__atlas_ticket=..", "ticket", "attempt_id", "status" }
+//        | { "ok": false, "error": "login_required" | ... }
 // The browser only lets the extensions named in the host manifest start this program.
 #include "sso_common.hpp"
 
@@ -45,9 +46,9 @@ int main() {
   int64_t now = rig->clock.nowMs();
   // A stale session is refreshed quietly; a missing one needs the user to sign in with the broker (the host never prompts).
   if (r.ok && st.sessionExpiresAt <= now && !st.refreshToken.empty() && st.refreshExpiresAt > now) r = rig->client->refresh();
-  std::string url;
-  if (r.ok) r = rig->client->webSession(url);
-  if (r.ok) writeMessage({{"ok", true}, {"ticket_url", url}});
+  atlas::WebSession w;
+  if (r.ok) r = rig->client->webSession(req.value("redirect_url", ""), w);
+  if (r.ok) writeMessage({{"ok", true}, {"redirect_to", w.redirectTo}, {"ticket", w.ticket}, {"attempt_id", w.attemptId}, {"status", w.status}});
   else writeMessage({{"ok", false}, {"error", r.error == "no_session" || r.error == "session_expired" ? "login_required" : r.error}});
   return 0;
 }

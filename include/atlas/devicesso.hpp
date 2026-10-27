@@ -38,6 +38,12 @@ struct SsoState {
   static SsoState fromJson(const json& j);
 };
 
+// What web_session returns: a completed sign-in the Atlas JS SDK turns into cookies (ticket), or the step still owed (status).
+struct WebSession {
+  std::string attemptId, status, ticket, redirectTo;
+  int64_t expiresAt = 0;
+};
+
 struct SsoResult {
   bool ok = false;
   std::string error;  // short code: unreachable, not_enabled, rejected:<code>, bad_response, not_registered, revoked, ...
@@ -64,7 +70,8 @@ class SsoClient {
   SsoResult registerUser(const std::string& username, const std::string& method /* user_tpm_key */);
   SsoResult login();    // user presence: signs the embedded assertion with the user key
   SsoResult refresh();  // device signing key only; rotates the refresh token
-  SsoResult webSession(std::string& ticketUrl);  // needs a live session
+  // Needs a live session. redirectUrl (https, an allowed origin of the app) may be empty; when given, redirect_to must stay on its host.
+  SsoResult webSession(const std::string& redirectUrl, WebSession& out);
   SsoState state() const;
   void forget();  // drops the local state (not the server registration)
 

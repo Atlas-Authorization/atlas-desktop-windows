@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Atlas device sign-in",
+  "version": "0.2.0",
+  "description": "Signs you in to your Atlas-protected sites with this PC's device-bound session.",
+  "permissions": ["nativeMessaging", "webNavigation", "storage"],
+  "host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "browser_specific_settings": { "gecko": { "id": "device-sso@atlasauth.net" } }
+}

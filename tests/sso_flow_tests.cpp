@@ -53,7 +53,7 @@ struct Idp : IHttpClient {
   int n = 0, refreshN = 0;
   std::string refreshToken;  // the one live token
   std::vector<std::string> reasons;
-  bool badIdToken = false;
+  bool badIdToken = false, evilRedirect = false;
   std::string tokenEndpoint = std::string(kApi) + "token";
 
   static HttpResponse j(int s, const json& b) { return {s, b.dump()}; }
@@ -97,8 +97,13 @@ struct Idp : IHttpClient {
     if (url == std::string(kApi) + "web_session") {
       if (!nonces.erase(b["nonce"])) return err(401, "nonce");
       if (revoked || refreshToken.empty()) return err(403, "forbidden");
-      if (!sigOk(signingPub, signedMessage("sso_web", "ins_1", regId, b["nonce"]), b["signature"])) return err(401, "verification_failed");
-      return j(201, {{"ticket", "t1"}, {"expires_at", 1}, {"ticket_url", std::string(kBase) + "/v1/client/sign_in?ticket=t1"}});
+      std::string ru = b.value("redirect_url", "");
+      std::string rh = ru.empty() ? "-" : b64uEncode(sha256(toBytes(ru)));
+      if (!sigOk(signingPub, signedMessage("sso_web", "ins_1", regId, b["nonce"], rh), b["signature"])) return err(401, "verification_failed");
+      json res = {{"attempt_id", "att_1"}, {"status", "complete"}, {"ticket", "t1"}, {"expires_at", 1}, {"redirect_to", nullptr}};
+      if (!ru.empty()) res["redirect_to"] = ru + "?__atlas_attempt=att_1&__atlas_ticket=t1";
+      if (evilRedirect) res["redirect_to"] = "https://evil.example.net/x";
+      return j(201, res);
     }
     return {404, ""};
   }
@@ -167,9 +172,16 @@ TEST(SsoFlow, RegisterLoginRefreshAndWebSession) {
   EXPECT_EQ(r.client.state().userId, "usr_1");
   ASSERT_TRUE(r.client.refresh().ok);
   EXPECT_EQ(r.client.state().refreshToken, "rt2");  // rotated
-  std::string url;
-  ASSERT_TRUE(r.client.webSession(url).ok);
-  EXPECT_EQ(url, "https://auth.example.com/v1/client/sign_in?ticket=t1");
+  WebSession w;
+  ASSERT_TRUE(r.client.webSession("https://app.example.com/home", w).ok);
+  EXPECT_EQ(w.ticket, "t1");
+  EXPECT_EQ(w.attemptId, "att_1");
+  EXPECT_EQ(w.redirectTo, "https://app.example.com/home?__atlas_attempt=att_1&__atlas_ticket=t1");
+  ASSERT_TRUE(r.client.webSession("", w).ok);  // no redirect: ticket + attempt only
+  EXPECT_TRUE(w.redirectTo.empty());
+  EXPECT_FALSE(r.client.webSession("http://app.example.com/", w).ok);  // plain http is never a redirect
+  r.idp.evilRedirect = true;
+  EXPECT_EQ(r.client.webSession("https://app.example.com/home", w).error, "bad_response");  // answer for another host
 }
 
 TEST(SsoFlow, ReusedRefreshTokenKillsTheFamilyAndTheClientDropsIt) {
@@ -188,11 +200,11 @@ TEST(SsoFlow, ReusedRefreshTokenKillsTheFamilyAndTheClientDropsIt) {
 TEST(SsoFlow, WebSessionNeedsALiveSessionAndRefreshNeedsOneToo) {
   Rig r;
   r.registerAll();
-  std::string url;
-  EXPECT_EQ(r.client.webSession(url).error, "no_session");  // never logged in
+  WebSession w;
+  EXPECT_EQ(r.client.webSession("", w).error, "no_session");  // never logged in
   ASSERT_TRUE(r.client.login().ok);
   r.clock.now += 9 * 3600 * 1000;  // past session_expires_at (8 h)
-  EXPECT_EQ(r.client.webSession(url).error, "no_session");
+  EXPECT_EQ(r.client.webSession("", w).error, "no_session");
   r.clock.now += 31LL * 24 * 3600 * 1000;
   EXPECT_EQ(r.client.refresh().error, "session_expired");
 }

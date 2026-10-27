@@ -368,22 +368,32 @@ SsoResult SsoClient::refresh() {
   return r;
 }
 
-SsoResult SsoClient::webSession(std::string& ticketUrl) {
+SsoResult SsoClient::webSession(const std::string& redirectUrl, WebSession& out) {
   SsoState s = state();
   if (s.registrationId.empty()) return bad("not_registered");
   if (s.sessionExpiresAt <= clock_.nowMs()) return bad("no_session");
+  if (!redirectUrl.empty() && host(redirectUrl).empty()) return bad("bad_redirect");
   std::string n;
   SsoResult nr = nonce(n);
   if (!nr.ok) return nr;
-  Bytes sig = signing_.sign(toBytes(signedMessage("sso_web", ep_.instanceId, s.registrationId, n)));
+  std::string rh = redirectUrl.empty() ? "-" : b64uEncode(sha256(toBytes(redirectUrl)));
+  Bytes sig = signing_.sign(toBytes(signedMessage("sso_web", ep_.instanceId, s.registrationId, n, rh)));
   if (sig.size() != 64) return bad("key_error");
-  json out;
-  SsoResult r = postJson("web_session", {{"registration_id", s.registrationId}, {"nonce", n}, {"signature", b64uEncode(sig)}}, out, 201);
+  json body = {{"registration_id", s.registrationId}, {"nonce", n}, {"signature", b64uEncode(sig)}};
+  if (!redirectUrl.empty()) body["redirect_url"] = redirectUrl;
+  json res;
+  SsoResult r = postJson("web_session", body, res, 201);
   if (!r.ok) return r;
-  std::string url = out.value("ticket_url", "");
-  std::string h = host(url);
-  if (h.empty() || (h != host(base_) && h != host(ep_.issuer))) return bad("bad_response");  // never hand a browser a foreign URL
-  ticketUrl = url;
+  WebSession w;
+  w.attemptId = res.value("attempt_id", "");
+  w.status = res.value("status", "");
+  w.ticket = res["ticket"].is_string() ? res["ticket"].get<std::string>() : "";
+  w.redirectTo = res["redirect_to"].is_string() ? res["redirect_to"].get<std::string>() : "";
+  w.expiresAt = res.value("expires_at", static_cast<int64_t>(0));
+  if (w.attemptId.empty() || w.status.empty()) return bad("bad_response");
+  // Never hand a browser a URL on a host we did not ask for.
+  if (!w.redirectTo.empty() && (redirectUrl.empty() || host(w.redirectTo) != host(redirectUrl))) return bad("bad_response");
+  out = w;
   return r;
 }
 

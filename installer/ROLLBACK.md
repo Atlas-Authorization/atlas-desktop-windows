@@ -67,3 +67,15 @@ Uninstalling removes the files, the COM registration, the Credential Providers a
 and the sync task. `%ProgramData%\Atlas` (config and DPAPI-protected secrets) and the device keys are left in place;
 delete the folder and the CNG keys named `AtlasLoginAgent-<instance id>` and `AtlasLoginAgent-seal-<instance id>` if
 you want them gone. The break-glass account is not removed.
+
+## Command-line MFA and device sign-in
+
+- **sshd lockout.** `enable-sshd-mfa.ps1 -ExcludeUsers <break-glass>` keeps one account out of the wrapper. Before enabling on a PC reached only
+  by ssh, check the kill switch works from a second session. Undo: `enable-sshd-mfa.ps1 -Remove` (or delete the block between `# BEGIN atlas-cli-mfa`
+  and `# END atlas-cli-mfa` in `%ProgramData%\ssh\sshd_config`, then `Restart-Service sshd`; the previous file is saved as `sshd_config.atlas-bak`).
+- **Kill switch.** `HKLM\SOFTWARE\Atlas\LoginAgent\Disabled = 1` makes `atlas-cli-mfa.exe` pass with a warning, as it does for the provider.
+- **Service stopped or broken** means command lines are refused (fail closed). `sc stop AtlasCliMfa` is therefore a lockout for wrapped users;
+  use the kill switch, not the service, to switch the feature off.
+- **Device sign-in** is per user and optional: `atlas-sso-broker logout` deletes that user's keys and local state; the administrator revokes the
+  registration in the dashboard. Uninstalling removes the tasks, the native-messaging registration and the service; user keys under the
+  `AtlasSso-<instance id>-*` names are left (run `logout` first).

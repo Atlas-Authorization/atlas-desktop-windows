@@ -3,7 +3,7 @@
 //   login                              prove presence (Windows asks) and get a device-bound session
 //   refresh [--force]                  rotate the refresh token (no prompt)
 //   maintain [--interactive]           what the scheduled task runs: refresh when due; with --interactive also login when needed
-//   web-session                        print a one-time browser sign-in URL
+//   web-session [--redirect URL]       complete a browser sign-in; prints the URL to open (redirect_to) or the ticket
 //   status                             what this PC holds (never prints a token)
 //   logout                             delete the keys and local state (the dashboard revokes the registration on the server)
 // Exit codes: 0 ok, 1 failed, 2 not set up, 3 sign-in needed, 4 revoked by the administrator, 64 usage.
@@ -94,10 +94,13 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"login") return report(rig->client->login(), "Signed in with this device.");
     if (cmd == L"refresh") return report(rig->client->refresh(), "Refreshed.");
     if (cmd == L"web-session") {
-      std::string url;
-      r = rig->client->webSession(url);
-      if (r.ok) std::printf("%s\n", url.c_str());
-      return r.ok ? 0 : report(r, "");
+      std::string redirect;
+      arg(argc, argv, L"--redirect", redirect);
+      atlas::WebSession w;
+      r = rig->client->webSession(redirect, w);
+      if (!r.ok) return report(r, "");
+      std::printf("%s\n", w.redirectTo.empty() ? w.ticket.c_str() : w.redirectTo.c_str());  // a ticket is a credential: only to the user's own console
+      return 0;
     }
     // maintain: refresh once half of the session is gone; sign in again (with a prompt) only when asked to.
     bool live = st.sessionExpiresAt > now;
