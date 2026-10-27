@@ -66,6 +66,9 @@ jobs:
       - name: Real-CNG tests (ECDH byte order, sealed bundle through CNG)
         shell: pwsh
         run: ctest --preset windows-msvc-x64 -R CngEcdh --output-on-failure -V
+      - name: Provider GUIDs and WebAuthn platform check (log)
+        shell: pwsh
+        run: ctest --preset windows-msvc-x64 -R "WindowsProviders|WindowsWebAuthn" --output-on-failure -V
       - uses: actions/upload-artifact@v4
         with:
           name: windows-binaries

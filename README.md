@@ -51,7 +51,42 @@ DPAPI machine-scope files in `%ProgramData%\Atlas\secrets` restricted to SYSTEM 
 - Offline codes are single use per 30 second step (replay refused).
 - A bundle whose MAC does not verify is never stored or opened.
 - Enrolled but with a broken config or missing device key: refused with a message. Not enrolled / no config: stock behaviour.
-- Passkeys: `unsupported_in_this_build` unless a WebAuthn handler is injected into `LoginGate`.
+- Passkeys (security keys): only through the platform WebAuthn API, only when the server allows the `passkey` factor and a key answers; a malformed option set (origin not `https://<rp id>`, short challenge) never reaches the authenticator.
+
+## Security keys (passkeys) at sign-in
+
+`atlas_credential_provider.dll` offers "Use security key" when the policy allows the `passkey` factor. It calls the Windows WebAuthn
+platform API (`webauthn.dll`: `WebAuthNAuthenticatorGetAssertion` / `WebAuthNAuthenticatorMakeCredential`,
+<https://github.com/microsoft/webauthn>), loaded at run time so a Windows without it still loads the provider and shows the stock tiles.
+
+LogonUI gives a credential no window of its own, so the provider uses the documented pattern: the window handle comes from
+`ICredentialProviderCredentialEvents::OnCreatingWindow` (Microsoft: "Any credential provider displaying a dialog must parent it to the HWND supplied by
+OnCreatingWindow"), the blocking call runs on a worker thread outside the provider lock, the tile status line says what to do ("Touch your security key"),
+and deselecting the tile cancels the operation (`WebAuthNCancelCurrentOperation`). `IConnectableCredentialProviderCredential::Connect` is not an
+option: Microsoft documents it for the pre-logon-access (PLAP) screen only.
+
+**Not possible at the sign-in screen: Windows Hello platform passkeys.** A platform credential lives in a user profile that is not loaded before sign-in
+and Hello for Business is already the stock device-bound sign-in. The provider therefore asks for a roaming (cross-platform) authenticator only
+(`WEBAUTHN_AUTHENTICATOR_ATTACHMENT_CROSS_PLATFORM`): USB, NFC or BLE security keys. Keep Hello as it is (`hide_windows_hello` false) or hide it (true) to make
+Atlas the only door. Register a key with `atlas-passkey.exe` (elevated, signed-in session): you pass a code or push first (Atlas requires that proof), then
+touch the key.
+
+Unverified until run on a real PC at the LogonUI screen with a real key: that `webauthn.dll` shows its prompt from LogonUI's process and that the HWND from
+`OnCreatingWindow` is accepted. CI compiles the code, runs the portable tests and checks the platform DLL loads.
+
+## Hiding the stock sign-in tiles
+
+When Atlas is required the stock password, picture-password and PIN tiles are hidden so there is no way round the Atlas step. Two options in
+`config.json` (both default `false`, both only apply while the stock tiles are being hidden):
+
+| Option | Hides | Provider ids |
+|---|---|---|
+| `hide_windows_hello` | Windows Hello for Business (NGC) | `{D6886603-9D2F-4EB2-B667-1971041FA96B}` |
+| `hide_smart_card` | smart-card sign-in | `{8FD7E19C-3BF7-489B-A72C-846AB3678C96}` Smartcard Credential Provider, `{1B283861-754F-4022-AD47-A5EAAA618894}` Reader Selection, `{1EE7337F-85AC-45E2-A23C-37C753209769}` WinRT, `{94596C7E-3744-41CE-893E-BBF09122F76A}` PIN |
+
+Microsoft documents the filter (`ICredentialProviderFilter::Filter`) but publishes no table of the in-box provider GUIDs, so they come from the registry the OS
+ships (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers`). The Windows CI job reads that key on a real runner and fails if a
+GUID is not registered under the expected name. A smart card is a strong factor of its own: hide it only when cards must not bypass the Atlas step.
 
 ## Build and test
 

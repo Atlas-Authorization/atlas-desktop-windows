@@ -8,5 +8,6 @@
   "fail_open_when_never_synced": false,
   "fail_closed_hide": false,
   "hide_windows_hello": false,
+  "hide_smart_card": false,
   "break_glass_accounts": []
 }

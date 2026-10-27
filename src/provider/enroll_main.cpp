@@ -1,6 +1,6 @@
 // atlas-enroll.exe: run once, elevated, after the MSI is installed.
 //   atlas-enroll.exe [--code <enrolment code>] [--pin <6-12 digits>] [--show-otp-uri] [--force]
-//   atlas-enroll.exe --write-config --instance-url U --publishable-key K --instance-id I [--fail-open 0|1] [--fail-closed-hide 0|1] [--break-glass a,b]
+//   atlas-enroll.exe --write-config --instance-url U --publishable-key K --instance-id I [--fail-open 0|1] [--fail-closed-hide 0|1] [--hide-windows-hello 0|1] [--hide-smart-card 0|1] [--break-glass a,b]
 //     (run by the MSI: creates config.json unless an enrolled one already exists)
 // Missing --code / --pin are prompted for without echo (a command line is visible to other processes).
 #include "agent.hpp"
@@ -27,7 +27,7 @@ std::string prompt(const char* label) {
 
 int wmain(int argc, wchar_t** argv) {
   std::string code, pin, url, pk, iid;
-  bool showUri = false, force = false, writeConfig = false, failOpen = false, failClosedHide = false;
+  bool showUri = false, force = false, writeConfig = false, failOpen = false, failClosedHide = false, hideHello = false, hideCard = false;
   std::string breakGlass;
   for (int i = 1; i < argc; i++) {
     std::wstring a = argv[i];
@@ -37,6 +37,8 @@ int wmain(int argc, wchar_t** argv) {
     else if (a == L"--instance-id" && i + 1 < argc) iid = win::toUtf8(argv[++i]);
     else if (a == L"--fail-open" && i + 1 < argc) failOpen = std::wstring(argv[++i]) == L"1";
     else if (a == L"--fail-closed-hide" && i + 1 < argc) failClosedHide = std::wstring(argv[++i]) == L"1";
+    else if (a == L"--hide-windows-hello" && i + 1 < argc) hideHello = std::wstring(argv[++i]) == L"1";
+    else if (a == L"--hide-smart-card" && i + 1 < argc) hideCard = std::wstring(argv[++i]) == L"1";
     else if (a == L"--break-glass" && i + 1 < argc) breakGlass = win::toUtf8(argv[++i]);
     else if (a == L"--code" && i + 1 < argc) code = win::toUtf8(argv[++i]);
     else if (a == L"--pin" && i + 1 < argc) pin = win::toUtf8(argv[++i]);
@@ -53,6 +55,8 @@ int wmain(int argc, wchar_t** argv) {
     c.instanceId = iid;
     c.failOpenWhenNeverSynced = failOpen;
     c.failClosedHide = failClosedHide;
+    c.hideWindowsHello = hideHello;
+    c.hideSmartCard = hideCard;
     for (size_t at = 0; at < breakGlass.size();) {
       size_t comma = breakGlass.find(',', at);
       std::string name = breakGlass.substr(at, comma == std::string::npos ? std::string::npos : comma - at);

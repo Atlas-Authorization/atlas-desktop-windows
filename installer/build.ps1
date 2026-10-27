@@ -26,7 +26,7 @@ try {
   if (-not (Test-Path "$bin\atlas_credential_provider.dll")) {
     $bin = Join-Path $root "build\windows-msvc-x64\src\provider\$Configuration"
   }
-  foreach ($f in "atlas_credential_provider.dll", "atlas-enroll.exe", "atlas-sync.exe") {
+  foreach ($f in "atlas_credential_provider.dll", "atlas-enroll.exe", "atlas-passkey.exe", "atlas-sync.exe") {
     if (-not (Test-Path "$bin\$f")) { throw "missing build output: $bin\$f" }
   }
 
@@ -40,7 +40,7 @@ try {
   }
   function Sign-File($path) { if ($signArgs) { & signtool @signArgs $path; if ($LASTEXITCODE) { throw "signtool failed for $path" } } }
 
-  foreach ($f in "atlas_credential_provider.dll", "atlas-enroll.exe", "atlas-sync.exe") { Sign-File "$bin\$f" }
+  foreach ($f in "atlas_credential_provider.dll", "atlas-enroll.exe", "atlas-passkey.exe", "atlas-sync.exe") { Sign-File "$bin\$f" }
 
   New-Item -ItemType Directory -Force $OutDir | Out-Null
   $suffix = if ($signArgs) { "" } else { "-unsigned" }
