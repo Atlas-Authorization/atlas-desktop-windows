@@ -31,7 +31,9 @@ class LoginGate {
 
   void setPasskeyHandler(PasskeyFn fn) { passkey_ = std::move(fn); }
 
-  GateDecision begin();  // best-effort sync, then decide from the (fresh or cached) state
+  // `passwordVerified` must be true: the caller has already checked the user's password locally. When false the
+  // gate refuses ("password_not_verified") BEFORE any network call, so a wrong password never triggers a push or sync.
+  GateDecision begin(bool passwordVerified);  // best-effort sync, then decide from the (fresh or cached) state
   StepResult startPush();  // detail = the number to display
   StepResult pollPush();
   StepResult submitCode(const std::string& code);  // online TOTP

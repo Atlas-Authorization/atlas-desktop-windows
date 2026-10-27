@@ -271,13 +271,13 @@ TEST(Sync, EventsKeptWhenReportFails) {
 TEST(Gate, NotRequiredLetsPasswordThrough) {
   Rig r;
   r.server.required = false;
-  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::NotRequired);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::NotRequired);
   EXPECT_TRUE(r.gate->satisfied());
 }
 
 TEST(Gate, PushHappyPathShowsNumberMatch) {
   Rig r;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   ASSERT_EQ(d.kind, GateDecision::Kind::Required);
   EXPECT_TRUE(d.online);
   EXPECT_FALSE(r.gate->satisfied());
@@ -296,7 +296,7 @@ TEST(Gate, PushHappyPathShowsNumberMatch) {
 
 TEST(Gate, PushDeniedOnPhoneFails) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.gate->startPush();
   r.server.pushStatus = "failed";
   EXPECT_EQ(r.gate->pollPush().step, Step::Failed);
@@ -306,7 +306,7 @@ TEST(Gate, PushDeniedOnPhoneFails) {
 
 TEST(Gate, TotpWrongThenRight) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   EXPECT_EQ(r.gate->submitCode("000000").step, Step::WrongCode);
   EXPECT_EQ(r.gate->submitCode("12ab56").step, Step::WrongCode);  // malformed: never sent
   EXPECT_FALSE(r.gate->satisfied());
@@ -317,7 +317,7 @@ TEST(Gate, TotpWrongThenRight) {
 
 TEST(Gate, TotpFiveWrongEndsChallenge) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   Step last = Step::Pending;
   for (int i = 0; i < 5; i++) last = r.gate->submitCode("000000").step;
   EXPECT_EQ(last, Step::Failed);
@@ -327,7 +327,7 @@ TEST(Gate, TotpFiveWrongEndsChallenge) {
 TEST(Gate, PasskeyUnsupportedUnlessHandlerInjected) {
   Rig r;
   r.server.factors = json::array({"passkey"});
-  r.gate->begin();
+  r.gate->begin(true);
   auto s = r.gate->submitPasskey();
   EXPECT_EQ(s.step, Step::Unsupported);
   EXPECT_EQ(s.detail, "unsupported_in_this_build");
@@ -343,23 +343,23 @@ TEST(Gate, PasskeyUnsupportedUnlessHandlerInjected) {
 
 TEST(Gate, RevokedDevicePreviouslyRequiredIsDenied) {
   Rig r;
-  r.gate->begin();  // caches required + bundle
+  r.gate->begin(true);  // caches required + bundle
   r.server.revoked = true;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
   EXPECT_EQ(d.reason, "revoked");
   EXPECT_FALSE(r.vault->heldBundle());
   EXPECT_FALSE(r.gate->satisfied());
   // and it stays denied when the network later drops: the cache says revoked
   r.http.down = true;
-  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::Denied);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::Denied);
 }
 
 TEST(Gate, UnreachableFallsBackToOfflineUnlock) {
   Rig r;
-  r.gate->begin();  // online: caches state and bundle
+  r.gate->begin(true);  // online: caches state and bundle
   r.http.down = true;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   ASSERT_EQ(d.kind, GateDecision::Kind::Required);
   EXPECT_FALSE(d.online);
   EXPECT_TRUE(d.offlineAvailable);
@@ -374,9 +374,9 @@ TEST(Gate, UnreachableFallsBackToOfflineUnlock) {
 
 TEST(Gate, OfflineLockoutThroughGate) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
-  r.gate->begin();
+  r.gate->begin(true);
   for (int i = 0; i < 5; i++) r.gate->submitOffline(vectors()["pin"]["value"], "000000");
   EXPECT_EQ(r.gate->submitOffline(vectors()["pin"]["value"], "877905").step, Step::Locked);
   EXPECT_FALSE(r.gate->satisfied());
@@ -384,23 +384,23 @@ TEST(Gate, OfflineLockoutThroughGate) {
 
 TEST(Gate, UnreachableWithExpiredBundleIsDenied) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
   r.clock.now = 1800259200000 + 1000;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
   EXPECT_EQ(d.reason, "offline_expired");
 }
 
 TEST(Gate, UnreachableWithClockRolledBackIsDenied) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
   r.clock.now += 2 * 24 * 3600 * 1000LL;
-  r.gate->begin();
+  r.gate->begin(true);
   r.vault->noteTime();
   r.clock.now -= 24 * 3600 * 1000LL;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
   EXPECT_EQ(d.reason, "clock");
 }
@@ -408,9 +408,9 @@ TEST(Gate, UnreachableWithClockRolledBackIsDenied) {
 TEST(Gate, RequiredButNoBundleAndOfflineIsDenied) {
   Rig r;
   r.server.withBundle = false;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
   EXPECT_EQ(d.reason, "offline_unavailable");
 }
@@ -418,15 +418,15 @@ TEST(Gate, RequiredButNoBundleAndOfflineIsDenied) {
 TEST(Gate, OfflineDisabledByPolicyIsDenied) {
   Rig r;
   r.server.offlineEnabled = false;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
-  EXPECT_EQ(r.gate->begin().reason, "offline_unavailable");
+  EXPECT_EQ(r.gate->begin(true).reason, "offline_unavailable");
 }
 
 TEST(Gate, NeverSyncedFailsClosedByDefault) {
   Rig r;
   r.http.down = true;
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
   EXPECT_EQ(d.reason, "never_synced");
   EXPECT_FALSE(r.gate->satisfied());
@@ -436,30 +436,30 @@ TEST(Gate, NeverSyncedFailsClosedByDefault) {
 TEST(Gate, NeverSyncedFailOpenOnlyWhenConfigured) {
   Rig r(true);
   r.http.down = true;
-  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::NotRequired);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::NotRequired);
   EXPECT_TRUE(r.gate->satisfied());
 }
 
 TEST(Gate, CachedNotRequiredAllowsWhileOffline) {
   Rig r;
   r.server.required = false;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
-  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::NotRequired);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::NotRequired);
 }
 
 TEST(Gate, RequiredStaysRequiredOfflineEvenIfServerStopsAnswering) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.handler = [](const std::string&, const json&) { return HttpResponse{502, "bad gateway"}; };
-  auto d = r.gate->begin();
+  auto d = r.gate->begin(true);
   EXPECT_EQ(d.kind, GateDecision::Kind::Required);  // never silently drops to password-only
   EXPECT_FALSE(r.gate->satisfied());
 }
 
 TEST(Gate, UnreachableDuringChallengeIsNotVerified) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.gate->startPush();
   r.http.down = true;
   EXPECT_EQ(r.gate->pollPush().step, Step::Unreachable);
@@ -470,7 +470,7 @@ TEST(Gate, UnreachableDuringChallengeIsNotVerified) {
 TEST(Gate, UnenrolledIsDeniedByTheCoreCallerDecidesPassthrough) {
   Rig r;
   r.config.enrolled = false;
-  EXPECT_EQ(r.gate->begin().reason, "not_enrolled");
+  EXPECT_EQ(r.gate->begin(true).reason, "not_enrolled");
 }
 
 TEST(Client, EnrollWithoutSealKeyOmitsField) {
@@ -488,10 +488,42 @@ TEST(Client, EnrollWithoutSealKeyOmitsField) {
 
 TEST(Gate, OfflineOpensWithSealKeyNotSigningKey) {
   Rig r;
-  r.gate->begin();
+  r.gate->begin(true);
   r.http.down = true;
-  EXPECT_EQ(r.gate->begin().kind, GateDecision::Kind::Required);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::Required);
   // A vault wired to the signing key (the wrong key) cannot open a bundle sealed to the seal key.
   OfflineVault wrong(r.store, r.clock, *r.key, "ddv_TESTVECTOR");
   EXPECT_EQ(wrong.status(), OfflineResult::BundleInvalid);
+}
+
+TEST(Gate, UnverifiedPasswordMakesNoNetworkCallAndNeverSatisfies) {
+  Rig r;
+  auto d = r.gate->begin(false);
+  EXPECT_EQ(d.kind, GateDecision::Kind::Denied);
+  EXPECT_EQ(d.reason, "password_not_verified");
+  EXPECT_TRUE(r.http.log.empty());
+  EXPECT_FALSE(r.gate->satisfied());
+  EXPECT_EQ(r.gate->startPush().step, Step::Unsupported);
+  EXPECT_EQ(r.gate->submitCode("123456").step, Step::Unsupported);
+  EXPECT_TRUE(r.http.log.empty());
+}
+
+TEST(Gate, UnverifiedPasswordDeniedEvenWhenNotRequiredOrFailOpen) {
+  Rig r(true);
+  r.server.required = false;
+  r.gate->begin(true);  // caches required=false
+  r.http.log.clear();
+  EXPECT_EQ(r.gate->begin(false).kind, GateDecision::Kind::Denied);
+  EXPECT_FALSE(r.gate->satisfied());
+  EXPECT_TRUE(r.http.log.empty());
+  Rig f(true);
+  f.http.down = true;
+  EXPECT_EQ(f.gate->begin(false).kind, GateDecision::Kind::Denied);
+  EXPECT_TRUE(f.http.log.empty());
+}
+
+TEST(Gate, VerifiedAfterUnverifiedWorks) {
+  Rig r;
+  r.gate->begin(false);
+  EXPECT_EQ(r.gate->begin(true).kind, GateDecision::Kind::Required);
 }

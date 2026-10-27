@@ -30,7 +30,7 @@ endif()
 
 add_library(atlas_core STATIC
   src/core/base.cpp src/core/crypto.cpp src/core/softkey.cpp src/core/offline.cpp
-  src/core/config.cpp src/core/client.cpp src/core/gate.cpp)
+  src/core/config.cpp src/core/policy.cpp src/core/client.cpp src/core/gate.cpp)
 target_include_directories(atlas_core PUBLIC include)
 target_link_libraries(atlas_core PUBLIC nlohmann_json::nlohmann_json PRIVATE OpenSSL::Crypto)
 if(MSVC)

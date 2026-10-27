@@ -12,11 +12,12 @@ bool sixDigits(const std::string& c) {
 }
 }  // namespace
 
-GateDecision LoginGate::begin() {
+GateDecision LoginGate::begin(bool passwordVerified) {
   satisfied_ = false;
   challengeId_.clear();
   challengeFactor_.clear();
   GateDecision d;
+  if (!passwordVerified) { d.reason = "password_not_verified"; decision_ = d; return d; }
   if (!cfg_.enrolled) { d.kind = GateDecision::Kind::Denied; d.reason = "not_enrolled"; decision_ = d; return d; }
 
   SyncOutcome out = sync_.run();

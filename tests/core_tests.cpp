@@ -343,3 +343,70 @@ TEST(OfflineVault, EventQueueDrops) {
   ASSERT_EQ(v.vault.events().size(), 1u);
   EXPECT_EQ(v.vault.events()[0].outcome, "success");
 }
+
+// ---- policy ----
+#include "atlas/policy.hpp"
+
+TEST(Policy, HideStockRules) {
+  HideInputs i;
+  i.enrolled = true; i.cacheKnown = true; i.cacheRequired = true;
+  EXPECT_TRUE(shouldHideStockProvider(i));
+  i.killSwitch = true;
+  EXPECT_FALSE(shouldHideStockProvider(i));  // kill switch always wins
+  i = {}; i.enrolled = true; i.cacheKnown = true; i.cacheRequired = false; i.offlineBundleValid = true;
+  EXPECT_FALSE(shouldHideStockProvider(i));  // MFA not required: nothing to protect
+  i = {}; i.cacheKnown = true; i.cacheRequired = true;
+  EXPECT_FALSE(shouldHideStockProvider(i));  // not enrolled
+  i = {}; i.enrolled = true;
+  EXPECT_FALSE(shouldHideStockProvider(i));  // never synced: stock stays
+  i.failClosedHide = true;
+  EXPECT_TRUE(shouldHideStockProvider(i));
+  i.killSwitch = true;
+  EXPECT_FALSE(shouldHideStockProvider(i));
+  i = {}; i.enrolled = true; i.offlineBundleValid = true;
+  EXPECT_TRUE(shouldHideStockProvider(i));   // bundle but no cache: still protected
+}
+
+TEST(Policy, StockProviderList) {
+  EXPECT_TRUE(isStockPasswordTypeProvider("{60B78E88-EAD8-445C-9CFD-0B87F74EA6CD}"));
+  EXPECT_TRUE(isStockPasswordTypeProvider("{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}"));
+  EXPECT_FALSE(isStockPasswordTypeProvider("{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}"));  // ours is never hidden
+  EXPECT_FALSE(isStockPasswordTypeProvider(""));
+}
+
+TEST(Policy, BreakGlassMatching) {
+  Config c;
+  c.breakGlassAccounts = {"AtlasBreakGlass", "CORP\\admin2"};
+  EXPECT_TRUE(isBreakGlass(c, "PC1", "atlasbreakglass", "PC1"));
+  EXPECT_TRUE(isBreakGlass(c, ".", "AtlasBreakGlass", "PC1"));
+  EXPECT_TRUE(isBreakGlass(c, "", "AtlasBreakGlass", "PC1"));
+  EXPECT_FALSE(isBreakGlass(c, "CORP", "AtlasBreakGlass", "PC1"));  // a domain account of that name is not the local one
+  EXPECT_TRUE(isBreakGlass(c, "corp", "ADMIN2", "PC1"));
+  EXPECT_FALSE(isBreakGlass(c, "PC1", "admin2", "PC1"));
+  EXPECT_FALSE(isBreakGlass(c, "PC1", "alice", "PC1"));
+  EXPECT_FALSE(isBreakGlass(Config{}, "PC1", "AtlasBreakGlass", "PC1"));  // default list is empty
+}
+
+TEST(Policy, ConfigBreakGlassAndFailClosedHide) {
+  auto c = parseConfig(R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i","fail_closed_hide":true,"break_glass_accounts":["AtlasBreakGlass"]})");
+  ASSERT_TRUE(c.config);
+  EXPECT_TRUE(c.config->failClosedHide);
+  EXPECT_EQ(c.config->breakGlassAccounts, std::vector<std::string>{"AtlasBreakGlass"});
+  EXPECT_EQ(parseConfig(c.config->toJson().dump()).config->breakGlassAccounts.size(), 1u);
+  EXPECT_FALSE(parseConfig(R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i","break_glass_accounts":"x"})").config);
+  EXPECT_FALSE(parseConfig(R"({"instance_url":"https://a.b","publishable_key":"pk","instance_id":"i","break_glass_accounts":[""]})").config);
+}
+
+TEST(Policy, LogonErrorClassification) {
+  EXPECT_EQ(classifyLogonUserError(0), PasswordCheck::Verified);
+  EXPECT_EQ(classifyLogonUserError(1907), PasswordCheck::Verified);  // must change: stock handles it after MFA
+  EXPECT_EQ(classifyLogonUserError(1330), PasswordCheck::Verified);
+  EXPECT_EQ(classifyLogonUserError(1385), PasswordCheck::Verified);
+  EXPECT_EQ(classifyLogonUserError(1326), PasswordCheck::Wrong);
+  EXPECT_EQ(classifyLogonUserError(1331), PasswordCheck::Wrong);
+  EXPECT_EQ(classifyLogonUserError(1909), PasswordCheck::Wrong);
+  EXPECT_EQ(classifyLogonUserError(1311), PasswordCheck::Indeterminate);
+  EXPECT_EQ(classifyLogonUserError(99999), PasswordCheck::Indeterminate);
+  EXPECT_TRUE(logonErrorNeedsInteractiveFallback(1311));
+  EXPECT_FALSE(logonErrorNeedsInteractiveFallback(1326));
+}

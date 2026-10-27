@@ -11,7 +11,8 @@ std::string Config::baseUrl() const {
 json Config::toJson() const {
   return {{"instance_url", instanceUrl}, {"publishable_key", publishableKey}, {"instance_id", instanceId},
           {"device_id", deviceId}, {"device_key_id", deviceKeyId}, {"seal_key_id", sealKeyId}, {"enrolled", enrolled},
-          {"fail_open_when_never_synced", failOpenWhenNeverSynced}};
+          {"fail_open_when_never_synced", failOpenWhenNeverSynced}, {"fail_closed_hide", failClosedHide},
+          {"break_glass_accounts", breakGlassAccounts}};
 }
 
 ConfigParse parseConfig(const std::string& text) {
@@ -35,8 +36,15 @@ ConfigParse parseConfig(const std::string& text) {
   if (!str("instance_url", true, c.instanceUrl) || !str("publishable_key", true, c.publishableKey) ||
       !str("instance_id", true, c.instanceId) || !str("device_id", false, c.deviceId) ||
       !str("device_key_id", false, c.deviceKeyId) || !str("seal_key_id", false, c.sealKeyId) || !boolean("enrolled", c.enrolled) ||
-      !boolean("fail_open_when_never_synced", c.failOpenWhenNeverSynced))
+      !boolean("fail_open_when_never_synced", c.failOpenWhenNeverSynced) || !boolean("fail_closed_hide", c.failClosedHide))
     return r;
+  if (j.contains("break_glass_accounts")) {
+    if (!j["break_glass_accounts"].is_array()) { r.error = "break_glass_accounts must be an array"; return r; }
+    for (const auto& a : j["break_glass_accounts"]) {
+      if (!a.is_string() || a.get<std::string>().empty()) { r.error = "break_glass_accounts must hold non-empty strings"; return r; }
+      c.breakGlassAccounts.push_back(a);
+    }
+  }
   if (c.instanceUrl.rfind("https://", 0) != 0 || c.instanceUrl.size() <= 8) { r.error = "instance_url must be an https:// URL"; return r; }
   if (c.enrolled && (c.deviceId.empty() || c.deviceKeyId.empty())) { r.error = "enrolled config needs device_id and device_key_id"; return r; }
   r.config = c;
