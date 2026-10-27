@@ -60,6 +60,9 @@ jobs:
       - name: Test
         shell: pwsh
         run: ctest --preset windows-msvc-x64 --output-on-failure
+      - name: Real-CNG tests (ECDH byte order, sealed bundle through CNG)
+        shell: pwsh
+        run: ctest --preset windows-msvc-x64 -R CngEcdh --output-on-failure -V
       - uses: actions/upload-artifact@v4
         with:
           name: windows-binaries

@@ -5,5 +5,7 @@
   "device_id": "",
   "device_key_id": "",
   "enrolled": false,
-  "fail_open_when_never_synced": false
+  "fail_open_when_never_synced": false,
+  "fail_closed_hide": false,
+  "break_glass_accounts": []
 }

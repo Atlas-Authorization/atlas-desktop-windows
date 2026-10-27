@@ -68,7 +68,7 @@ Windows (Visual Studio 2022, vcpkg with `VCPKG_ROOT` set; the manifest installs 
 ```powershell
 cmake --preset windows-msvc-x64
 cmake --build --preset windows-msvc-x64
-ctest --preset windows-msvc-x64
+ctest --preset windows-msvc-x64      # also runs the real-CNG tests (CngEcdh.*)
 ```
 
 MSI (needs the WiX v4 dotnet tool): `installer\build.ps1 -Version 0.1.0`. Signing happens only if
@@ -82,7 +82,7 @@ msiexec /i AtlasLoginAgent-0.1.0.msi INSTANCE_URL=https://auth.example.com PUBLI
 atlas-enroll.exe          # elevated; prompts for the enrolment code and the offline PIN (no echo)
 ```
 
-Optional properties: `FAIL_OPEN_WHEN_NEVER_SYNCED=1`, `EXCLUDE_STOCK_PROVIDER=1` (read the next section first).
+Optional properties: `FAIL_OPEN_WHEN_NEVER_SYNCED=1`, `FAIL_CLOSED_HIDE=1`, `BREAK_GLASS_ACCOUNTS=AtlasBreakGlass` (see the next section).
 Files go to `%ProgramFiles%\Atlas\LoginAgent`; config to `%ProgramData%\Atlas\config.json`; a scheduled task
 `Atlas\LoginAgentSync` (boot, hourly, network change) runs `atlas-sync.exe` as SYSTEM.
 `atlas-enroll.exe --show-otp-uri` prints the authenticator URI once if the user wants offline codes in an app.
@@ -90,9 +90,8 @@ Files go to `%ProgramFiles%\Atlas\LoginAgent`; config to `%ProgramData%\Atlas\co
 ## Kill switch and rollback
 
 `HKLM\SOFTWARE\Atlas\LoginAgent`, value `Disabled` (DWORD) = `1` turns the provider into a pure pass-through to the
-stock password provider. Details, Safe Mode behaviour, the break-glass options and what happens if the DLL fails to
-load are in [installer/ROLLBACK.md](installer/ROLLBACK.md). Short version: keep the stock password tile available
-(the default) until you have proven the kill switch on a test PC.
+stock password provider. Details, Safe Mode behaviour, the break-glass account and what happens if the DLL fails to
+load are in [installer/ROLLBACK.md](installer/ROLLBACK.md).
 
 ## Signing
 
@@ -110,17 +109,23 @@ Unsigned builds are named `-unsigned` and are for lab use.
 - The bundle MAC key and the sealed offline bundle are DPAPI machine-scope blobs. Machine scope means any
   process on the PC can decrypt them, so the folder ACL (SYSTEM + Administrators) is the real boundary.
 - Secrets (codes, PINs, number matches, bundles, keys) are never logged.
-- With the stock tile left in place (default) a user can bypass the Atlas step by choosing it. Excluding it is
-  a deliberate trade-off against lockout risk, see the rollback notes.
-- The second factor is checked before Windows validates the password, so a wrong password can still trigger a push.
+- Stock-tile bypass: an `ICredentialProviderFilter` in the same DLL (same CLSID, registered under Credential Provider
+  Filters) hides the stock password, picture-password and PIN tiles, but only while the cached policy says MFA is
+  required (`shouldHideStockProvider` in `atlas_core`, unit tested). If the DLL does not load, nothing is hidden. The
+  CLSIDs of the picture-password and PIN providers come from published lists and are unverified here.
+- Password first: the wrapped credential checks the typed password with `LogonUserW` (network logon, interactive
+  fallback when no domain controller is reachable) before the gate is even started, and `LoginGate::begin(false)`
+  refuses without any network call. A wrong password never sends a push. "Must change" and "expired" count as a correct
+  password, so stock Windows can handle them after the second factor.
+- Break glass: accounts listed in `break_glass_accounts` skip the Atlas step; each use writes event id 100.
 - Unsigned binaries run, but signed MSI/DLL is strongly recommended and required under WDAC/HVCI policies.
 
 ## Known gaps and what is unverified
 
 - Everything under `src/provider` and `installer/` has not been compiled or run on Windows.
+- The CNG ECDH byte order is no longer assumed: `tests/windows/ncrypt_ecdh_test.cpp` pins it against OpenSSL and
+  opens the server's sealed bundle through CNG; it has not run yet (first run is on `windows-latest`).
 - Whether the TPM provider accepts a persisted ECDH P-256 key on every device; the software KSP is the fallback.
-- `BCRYPT_KDF_RAW_SECRET` output is little-endian; the code reverses it to the big-endian X coordinate the
-  protocol needs. Verify against a real sealed bundle on hardware.
 - The provider updates fields from a background thread (push polling). Confirm LogonUI tolerates this on all
   supported builds.
 - Passkey (WebAuthn) sign-in is not implemented.

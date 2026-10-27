@@ -70,7 +70,33 @@ Bytes CngDeviceKey::sign(const Bytes& message) {
   return sig;
 }
 
-Bytes CngDeviceKey::ecdh(const Bytes& peer) {
+Bytes cngRawSecretToBigEndian(const Bytes& raw) {
+  return Bytes(raw.rbegin(), raw.rend());
+}
+
+Bytes CngDeviceKey::ecdh(const Bytes& peer) { return cngRawSecretToBigEndian(ecdhRaw(peer)); }
+
+std::unique_ptr<CngDeviceKey> CngDeviceKey::importEphemeralEcdh(const Bytes& x, const Bytes& y, const Bytes& d) {
+  if (x.size() != 32 || y.size() != 32 || d.size() != 32) return nullptr;
+  NCRYPT_PROV_HANDLE p = 0;
+  if (NCryptOpenStorageProvider(&p, MS_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) return nullptr;
+  Bytes blob(sizeof(BCRYPT_ECCKEY_BLOB) + 96);
+  auto* h = reinterpret_cast<BCRYPT_ECCKEY_BLOB*>(blob.data());
+  h->dwMagic = BCRYPT_ECDH_PRIVATE_P256_MAGIC;
+  h->cbKey = 32;
+  uint8_t* at = blob.data() + sizeof(BCRYPT_ECCKEY_BLOB);
+  std::copy(x.begin(), x.end(), at);
+  std::copy(y.begin(), y.end(), at + 32);
+  std::copy(d.begin(), d.end(), at + 64);
+  NCRYPT_KEY_HANDLE k = 0;
+  if (NCryptImportKey(p, 0, BCRYPT_ECCPRIVATE_BLOB, nullptr, &k, blob.data(), static_cast<DWORD>(blob.size()), 0) != ERROR_SUCCESS) {
+    NCryptFreeObject(p);
+    return nullptr;
+  }
+  return std::unique_ptr<CngDeviceKey>(new CngDeviceKey(p, k));
+}
+
+Bytes CngDeviceKey::ecdhRaw(const Bytes& peer) {
   if (!key_ || peer.size() != 65 || peer[0] != 0x04) return {};
   Bytes blob(sizeof(BCRYPT_ECCKEY_BLOB) + 64);
   auto* h = reinterpret_cast<BCRYPT_ECCKEY_BLOB*>(blob.data());
@@ -88,7 +114,6 @@ Bytes CngDeviceKey::ecdh(const Bytes& peer) {
     if (NCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, nullptr, raw.data(), static_cast<DWORD>(raw.size()), &n, 0) ==
             ERROR_SUCCESS &&
         n == 32) {
-      std::reverse(raw.begin(), raw.end());  // RAW_SECRET is little endian; the protocol wants the big endian X
       out = raw;
     }
   }

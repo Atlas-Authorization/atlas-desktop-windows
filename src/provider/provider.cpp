@@ -6,10 +6,13 @@
 //
 // UNTESTED ON WINDOWS until CI runs: written without a Windows toolchain at hand.
 #include "agent.hpp"
+#include "atlas/policy.hpp"
 #include "guids.hpp"
 #include "winutil.hpp"
 
 #include <credentialprovider.h>
+#include <ntsecapi.h>
+#include <wincred.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
 
@@ -51,6 +54,105 @@ const wchar_t* denyText(const std::string& reason) {
   if (reason == "offline_expired") return L"Offline sign-in has expired. Connect to the network.";
   if (reason == "clock") return L"The system clock looks wrong. Connect to the network to sync.";
   return L"Atlas can't be reached and no offline code is available.";
+}
+
+// ---- password handling (the Atlas step runs only after the password checked out locally) ----
+void wipe(std::wstring& s) {
+  if (!s.empty()) SecureZeroMemory(&s[0], s.size() * sizeof(wchar_t));
+  s.clear();
+}
+
+struct LogonInfo {
+  std::wstring domain, user, password;
+  LogonInfo() = default;
+  LogonInfo(const LogonInfo&) = delete;
+  LogonInfo& operator=(const LogonInfo&) = delete;
+  ~LogonInfo() { wipe(password); }
+  std::wstring identity() const {
+    std::wstring id = domain + L"\\" + user;
+    for (auto& c : id) c = static_cast<wchar_t>(towlower(c));
+    return id;
+  }
+};
+
+void freeBlob(CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* cs) {
+  if (cs->rgbSerialization) {
+    SecureZeroMemory(cs->rgbSerialization, cs->cbSerialization);
+    CoTaskMemFree(cs->rgbSerialization);
+  }
+  *cs = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION{};
+}
+
+// Reads user, domain and password out of the stock KERB_INTERACTIVE(_UNLOCK)_LOGON blob.
+bool unpackLogon(const CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION& cs, LogonInfo& out) {
+  if (!cs.rgbSerialization || cs.cbSerialization < sizeof(KERB_INTERACTIVE_LOGON)) return false;
+  const BYTE* base = cs.rgbSerialization;
+  auto* l = reinterpret_cast<const KERB_INTERACTIVE_LOGON*>(base);
+  if (l->MessageType != KerbInteractiveLogon && l->MessageType != KerbWorkstationUnlockLogon) return false;
+  auto read = [&](const UNICODE_STRING& u, std::wstring& dst) -> bool {
+    ULONG_PTR v = reinterpret_cast<ULONG_PTR>(u.Buffer);
+    ULONG_PTR off = v;
+    // Serialized blobs carry offsets from the start; tolerate an absolute pointer into the blob too.
+    if (off >= cs.cbSerialization && v >= reinterpret_cast<ULONG_PTR>(base)) off = v - reinterpret_cast<ULONG_PTR>(base);
+    if (u.Length % 2 != 0 || off > cs.cbSerialization || u.Length > cs.cbSerialization - off) return false;
+    dst.assign(reinterpret_cast<const wchar_t*>(base + off), u.Length / 2);
+    return true;
+  };
+  std::wstring prot;
+  if (!read(l->LogonDomainName, out.domain) || !read(l->UserName, out.user) || !read(l->Password, prot)) {
+    wipe(prot);
+    return false;
+  }
+  CRED_PROTECTION_TYPE type = CredUnprotected;
+  bool ok = true;
+  if (CredIsProtectedW(const_cast<LPWSTR>(prot.c_str()), &type) && type != CredUnprotected) {
+    DWORD cch = 0;
+    CredUnprotectW(FALSE, const_cast<LPWSTR>(prot.c_str()), static_cast<DWORD>(prot.size() + 1), nullptr, &cch);
+    std::wstring plain(cch ? cch : 1, L'\0');
+    if (cch && CredUnprotectW(FALSE, const_cast<LPWSTR>(prot.c_str()), static_cast<DWORD>(prot.size() + 1), &plain[0], &cch)) {
+      plain.resize(wcslen(plain.c_str()));
+      out.password = plain;
+    } else {
+      ok = false;
+    }
+    wipe(plain);
+  } else {
+    out.password = prot;
+  }
+  wipe(prot);
+  size_t bs = out.user.find(L'\\');
+  if (out.domain.empty() && bs != std::wstring::npos) {
+    out.domain = out.user.substr(0, bs);
+    out.user = out.user.substr(bs + 1);
+  }
+  return ok && !out.user.empty();
+}
+
+// LogonUserW NETWORK first (no profile, no side effects); a DC that cannot be reached falls back to an interactive
+// logon so cached domain credentials still verify offline. Core classifies the error.
+atlas::PasswordCheck verifyPassword(const LogonInfo& li) {
+  const wchar_t* dom = !li.domain.empty() ? li.domain.c_str() : (li.user.find(L'@') != std::wstring::npos ? nullptr : L".");
+  auto attempt = [&](DWORD type) -> DWORD {
+    HANDLE tok = nullptr;
+    if (LogonUserW(li.user.c_str(), dom, li.password.c_str(), type, LOGON32_PROVIDER_DEFAULT, &tok)) {
+      CloseHandle(tok);
+      return 0;
+    }
+    return GetLastError();
+  };
+  DWORD e = attempt(LOGON32_LOGON_NETWORK);
+  if (atlas::logonErrorNeedsInteractiveFallback(e)) e = attempt(LOGON32_LOGON_INTERACTIVE);
+  return atlas::classifyLogonUserError(e);
+}
+
+// Windows Event Log (Application, source AtlasLoginAgent, event id 100). Account name only, never a secret.
+void auditBreakGlass(const std::wstring& account) {
+  HANDLE h = RegisterEventSourceW(nullptr, L"AtlasLoginAgent");
+  if (!h) return;
+  std::wstring msg = L"Atlas Login Agent: break-glass sign-in by " + account + L"; the second factor was skipped.";
+  const wchar_t* strs[1] = {msg.c_str()};
+  ReportEventW(h, EVENTLOG_WARNING_TYPE, 0, 100, nullptr, 1, 0, strs, nullptr);
+  DeregisterEventSource(h);
 }
 
 // ---- events proxy: the inner credential talks to LogonUI as if it were the wrapper ----
@@ -303,31 +405,78 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
 
   HRESULT serializeLocked(CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* resp, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* cs,
                           PWSTR* statusText, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
+    // The stock credential packs the typed password; we need it to check the password BEFORE any Atlas request.
+    PWSTR innerText = nullptr;
+    CREDENTIAL_PROVIDER_STATUS_ICON innerIcon = CPSI_NONE;
+    HRESULT hr = inner_->GetSerialization(resp, cs, &innerText, &innerIcon);
+    if (FAILED(hr) || *resp != CPGSR_RETURN_CREDENTIAL_FINISHED) {  // stock needs more input or failed: pass it on
+      *statusText = innerText;
+      *icon = innerIcon;
+      return hr;
+    }
     auto refuse = [&](const wchar_t* msg) {
+      freeBlob(cs);  // the password blob never leaves on a refusal
+      CoTaskMemFree(innerText);
+      innerText = nullptr;
       *resp = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
       *icon = CPSI_ERROR;
       status(msg);
       dup(msg, statusText);
       return S_OK;
     };
+
+    LogonInfo li;
+    if (!unpackLogon(*cs, li)) return refuse(L"Sign-in could not be processed.");
+    const std::wstring who = li.identity();
+
+    wchar_t machine[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD ml = MAX_COMPUTERNAME_LENGTH + 1;
+    GetComputerNameW(machine, &ml);
+    if (atlas::isBreakGlass(agent_->cfg, win::toUtf8(li.domain), win::toUtf8(li.user), win::toUtf8(machine))) {
+      auditBreakGlass(li.domain + L"\\" + li.user);
+      *statusText = innerText;
+      *icon = innerIcon;
+      return hr;  // documented break-glass local account: stock path, audited
+    }
+
     if (!gate_->satisfied()) {
       if (!prompted_) {
-        decision_ = gate_->begin();  // best-effort sync (bounded by the HTTP timeouts), then decide
+        atlas::PasswordCheck pc = verifyPassword(li);
+        wipe(li.password);
+        if (pc != atlas::PasswordCheck::Verified)  // a wrong password never reaches the gate: no sync, no push
+          return refuse(pc == atlas::PasswordCheck::Wrong ? L"The user name or password is incorrect."
+                                                          : L"The password could not be checked. Try again.");
+        decision_ = gate_->begin(true);  // best-effort sync (bounded by the HTTP timeouts), then decide
         if (decision_.kind == atlas::GateDecision::Kind::Denied) {
           setShown(kStatus, true);
           return refuse(denyText(decision_.reason));
         }
         if (decision_.kind == atlas::GateDecision::Kind::Required) {
+          freeBlob(cs);
+          CoTaskMemFree(innerText);
           prompted_ = true;
+          verifiedIdentity_ = who;
           showPromptLocked();
           if (!offlineMode_ && has(decision_.factors, "push")) startPushLocked();
+          *resp = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
           *icon = CPSI_WARNING;
           dup(L"Second factor required.", statusText);
           return S_OK;
         }
+        // NotRequired: satisfied, fall through to hand out the blob we already hold
       } else {
+        wipe(li.password);
+        if (who != verifiedIdentity_) {  // the account was changed after the password check
+          gate_->reset();
+          prompted_ = false;
+          hideAll();
+          return refuse(L"The account changed. Enter the password again.");
+        }
         std::wstring code = text(kCode), pin = text(kPin);
         if (code.empty()) {
+          freeBlob(cs);
+          CoTaskMemFree(innerText);
+          *resp = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
           *icon = CPSI_WARNING;
           dup(L"Approve the push on your phone, or enter a code.", statusText);
           return S_OK;
@@ -347,14 +496,14 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
       }
     }
     if (!gate_->satisfied()) return refuse(L"Second factor required.");  // defensive: never fall through unverified
-    // Verified (or not required): only now does the password serialization go out.
-    HRESULT hr = inner_->GetSerialization(resp, cs, statusText, icon);
+    // Password checked and factor satisfied (or not required): the blob we hold goes out.
     requestStop();
-    if (*resp == CPGSR_RETURN_CREDENTIAL_FINISHED) {  // one verification, one sign-in attempt
-      gate_->reset();
-      prompted_ = false;
-      hideAll();
-    }
+    gate_->reset();  // one verification, one sign-in attempt
+    prompted_ = false;
+    verifiedIdentity_.clear();
+    hideAll();
+    *statusText = innerText;
+    *icon = innerIcon;
     return hr;
   }
 
@@ -365,6 +514,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
       std::lock_guard<std::mutex> g(agent_->mu);
       gate_->reset();
       prompted_ = false;
+      verifiedIdentity_.clear();
     }
     hideAll();
   }
@@ -415,6 +565,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
   std::unique_ptr<atlas::LoginGate> gate_;  // guarded by agent_->mu
   atlas::GateDecision decision_;            // guarded by agent_->mu
   bool prompted_ = false, offlineMode_ = false;  // guarded by agent_->mu
+  std::wstring verifiedIdentity_;                // account whose password was checked; guarded by agent_->mu
 
   std::mutex uiMu_;
   ComPtr<ICredentialProviderCredentialEvents> events_;
@@ -428,7 +579,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
 };
 
 // ---- the wrapping provider ----
-class AtlasProvider final : public ICredentialProvider, public ICredentialProviderSetUserArray {
+class AtlasProvider final : public ICredentialProvider, public ICredentialProviderSetUserArray, public ICredentialProviderFilter {
  public:
   AtlasProvider() { ++g_objects; }
   ~AtlasProvider() { --g_objects; }
@@ -437,6 +588,7 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     if (!ppv) return E_POINTER;
     if (riid == IID_IUnknown || riid == IID_ICredentialProvider) *ppv = static_cast<ICredentialProvider*>(this);
     else if (riid == IID_ICredentialProviderSetUserArray) *ppv = static_cast<ICredentialProviderSetUserArray*>(this);
+    else if (riid == IID_ICredentialProviderFilter) *ppv = static_cast<ICredentialProviderFilter*>(this);
     else { *ppv = nullptr; return E_NOINTERFACE; }
     AddRef();
     return S_OK;
@@ -516,9 +668,51 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     return S_OK;
   }
 
+  // ICredentialProviderFilter: same DLL, so if this DLL does not load the stock tile is simply not filtered.
+  IFACEMETHODIMP Filter(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD, GUID* clsids, BOOL* allow, DWORD count) override {
+    if (cpus != CPUS_LOGON && cpus != CPUS_UNLOCK_WORKSTATION) return S_OK;  // CredUI and password change untouched
+    // Only hide while the Atlas provider is itself in the list and allowed; otherwise users would have no tile.
+    bool ours = false;
+    for (DWORD i = 0; i < count; i++)
+      if (clsids[i] == CLSID_AtlasCredentialProvider && allow[i]) ours = true;
+    if (!ours || !shouldHideStock()) return S_OK;
+    for (DWORD i = 0; i < count; i++) {
+      wchar_t buf[64] = {};
+      if (StringFromGUID2(clsids[i], buf, 64) && atlas::isStockPasswordTypeProvider(win::toUtf8(buf))) allow[i] = FALSE;
+    }
+    return S_OK;
+  }
+  IFACEMETHODIMP UpdateRemoteCredential(const CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* in, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) override {
+    if (!in || !out) return E_INVALIDARG;
+    *out = *in;  // passthrough: a copy the caller owns
+    out->rgbSerialization = nullptr;
+    if (in->cbSerialization && in->rgbSerialization) {
+      out->rgbSerialization = static_cast<BYTE*>(CoTaskMemAlloc(in->cbSerialization));
+      if (!out->rgbSerialization) return E_OUTOFMEMORY;
+      memcpy(out->rgbSerialization, in->rgbSerialization, in->cbSerialization);
+    }
+    return S_OK;
+  }
+
   IFACEMETHODIMP SetUserArray(ICredentialProviderUserArray* users) override { return innerUsers_ ? innerUsers_->SetUserArray(users) : S_OK; }
 
  private:
+  static bool shouldHideStock() {
+    // Hide only when an enrolled, healthy install says MFA is required (or the config asks to fail closed).
+    std::shared_ptr<win::Agent> a;
+    std::string why;
+    if (win::loadAgent(a, why) != win::AgentState::Ready) return false;  // kill switch, not enrolled, or broken: stock stays
+    atlas::HideInputs in;
+    in.killSwitch = false;
+    in.enrolled = true;
+    in.failClosedHide = a->cfg.failClosedHide;
+    atlas::SyncCache c = atlas::loadSyncCache(a->store);
+    in.cacheKnown = c.known;
+    in.cacheRequired = c.required;
+    if (!c.known) in.offlineBundleValid = a->vault->status() == atlas::OfflineResult::Ok;
+    return atlas::shouldHideStockProvider(in);
+  }
+
   std::atomic<ULONG> ref_{1};
   ComPtr<ICredentialProvider> inner_;
   ComPtr<ICredentialProviderSetUserArray> innerUsers_;

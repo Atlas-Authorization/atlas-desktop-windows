@@ -12,3 +12,10 @@ Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}]
 @="Atlas Login Agent"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}]
+@="Atlas Login Agent"
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\EventLog\Application\AtlasLoginAgent]
+"EventMessageFile"=hex(2):25,00,53,00,79,00,73,00,74,00,65,00,6d,00,52,00,6f,00,6f,00,74,00,25,00,5c,00,53,00,79,00,73,00,74,00,65,00,6d,00,33,00,32,00,5c,00,45,00,76,00,65,00,6e,00,74,00,43,00,72,00,65,00,61,00,74,00,65,00,2e,00,65,00,78,00,65,00,00,00
+"TypesSupported"=dword:00000007
