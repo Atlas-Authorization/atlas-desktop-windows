@@ -12,6 +12,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+# Static CRT: the provider DLL is loaded into LogonUI and must not depend on a VC runtime redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 find_package(OpenSSL 3 REQUIRED)
 
@@ -45,7 +47,6 @@ if(ATLAS_BUILD_TESTS)
       GIT_REPOSITORY https://github.com/google/googletest.git
       GIT_TAG v1.15.2 GIT_SHALLOW TRUE)
     set(INSTALL_GTEST OFF CACHE INTERNAL "")
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
   endif()
   add_executable(atlas_core_tests tests/core_tests.cpp tests/flow_tests.cpp)
