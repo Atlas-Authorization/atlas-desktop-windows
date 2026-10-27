@@ -314,7 +314,7 @@ class AtlasCredential final : public ICredentialProviderCredential2, public ICon
   }
 
   // IConnectableCredentialProviderCredential
-  IFACEMETHODIMP Connect(IQueryContinue* qc) override {
+  IFACEMETHODIMP Connect(IQueryContinueWithStatus* qc) override {
     ComPtr<IConnectableCredentialProviderCredential> c;
     return SUCCEEDED(inner_.As(&c)) ? c->Connect(qc) : S_OK;
   }

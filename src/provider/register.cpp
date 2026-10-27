@@ -2,6 +2,7 @@
 #include "guids.hpp"
 
 #include <windows.h>
+#include <olectl.h>
 
 #include <string>
 

@@ -51,7 +51,7 @@ TEST(CngEcdh, SharedSecretMatchesOpenSsl) {
   RecordProperty("reversed_equals_openssl", reversed == fromOpenSsl ? "yes" : "no");
   std::cout << "raw      " << hex(raw) << "\nreversed " << hex(reversed) << "\nopenssl  " << hex(fromOpenSsl) << "\n";
 
-  EXPECT_EQ(cngRawSecretToBigEndian(raw), fromOpenSsl) << "winkey.cpp's byte-order helper is wrong";
+  EXPECT_EQ(win::cngRawSecretToBigEndian(raw), fromOpenSsl) << "winkey.cpp's byte-order helper is wrong";
   EXPECT_EQ(cng.key->ecdh(pointOf(peer->publicJwk())), fromOpenSsl);
 }
 
