@@ -1,5 +1,7 @@
 // atlas-enroll.exe: run once, elevated, after the MSI is installed.
 //   atlas-enroll.exe [--code <enrolment code>] [--pin <6-12 digits>] [--show-otp-uri] [--force]
+//   atlas-enroll.exe --write-config --instance-url U --publishable-key K --instance-id I [--fail-open]
+//     (run by the MSI: creates config.json unless an enrolled one already exists)
 // Missing --code / --pin are prompted for without echo (a command line is visible to other processes).
 #include "agent.hpp"
 #include "winutil.hpp"
@@ -24,15 +26,34 @@ std::string prompt(const char* label) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  std::string code, pin;
-  bool showUri = false, force = false;
+  std::string code, pin, url, pk, iid;
+  bool showUri = false, force = false, writeConfig = false, failOpen = false;
   for (int i = 1; i < argc; i++) {
     std::wstring a = argv[i];
-    if (a == L"--code" && i + 1 < argc) code = win::toUtf8(argv[++i]);
+    if (a == L"--write-config") writeConfig = true;
+    else if (a == L"--instance-url" && i + 1 < argc) url = win::toUtf8(argv[++i]);
+    else if (a == L"--publishable-key" && i + 1 < argc) pk = win::toUtf8(argv[++i]);
+    else if (a == L"--instance-id" && i + 1 < argc) iid = win::toUtf8(argv[++i]);
+    else if (a == L"--fail-open") failOpen = true;
+    else if (a == L"--code" && i + 1 < argc) code = win::toUtf8(argv[++i]);
     else if (a == L"--pin" && i + 1 < argc) pin = win::toUtf8(argv[++i]);
     else if (a == L"--show-otp-uri") showUri = true;
     else if (a == L"--force") force = true;
     else { std::fprintf(stderr, "usage: atlas-enroll [--code C] [--pin P] [--show-otp-uri] [--force]\n"); return 64; }
+  }
+  if (writeConfig) {
+    auto existing = win::readConfigFile();
+    if (existing.config && existing.config->enrolled) { std::printf("config already enrolled, left untouched\n"); return 0; }
+    atlas::Config c;
+    c.instanceUrl = url;
+    c.publishableKey = pk;
+    c.instanceId = iid;
+    c.failOpenWhenNeverSynced = failOpen;
+    auto check = atlas::parseConfig(c.toJson().dump());
+    if (!check.config) { std::fprintf(stderr, "config error: %s\n", check.error.c_str()); return 2; }
+    if (!win::writeConfigFile(c)) { std::fprintf(stderr, "could not write the config file\n"); return 6; }
+    std::printf("config written\n");
+    return 0;
   }
   auto parsed = win::readConfigFile();
   if (!parsed.config) { std::fprintf(stderr, "config error: %s\n", parsed.error.c_str()); return 2; }

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Atlas Login Agent installer (WiX v4). Build with:  wix build Package.wxs -arch x64 -d Version=0.1.0 -d BinDir=<dir with the three binaries>
+
+  Properties:
+    INSTANCE_URL, PUBLISHABLE_KEY, INSTANCE_ID   written to %ProgramData%\Atlas\config.json (HTTPS URL required)
+    FAIL_OPEN_WHEN_NEVER_SYNCED=1                allow password-only sign-in on a PC that has never synced (default: refuse)
+    EXCLUDE_STOCK_PROVIDER=1                     hide the stock password tile by policy so the Atlas step cannot be bypassed
+                                                 (default 0 - read ROLLBACK.md before turning this on)
+
+  The provider DLL is installed under %ProgramFiles%\Atlas\LoginAgent, never System32.
+  Safety: HKLM\SOFTWARE\Atlas\LoginAgent\Disabled = 1 turns the provider into a pure pass-through (see ROLLBACK.md).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Atlas Login Agent" Manufacturer="Atlas" Version="$(var.Version)"
+           UpgradeCode="6C2F0B7E-3D41-4E8A-A9B5-1F7D5E2C8A64" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of the Atlas Login Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Launch Condition="VersionNT64 &gt;= 603" Message="The Atlas Login Agent needs 64-bit Windows 10 or later." />
+
+    <Property Id="INSTANCE_URL" Secure="yes" />
+    <Property Id="PUBLISHABLE_KEY" Secure="yes" />
+    <Property Id="INSTANCE_ID" Secure="yes" />
+    <Property Id="FAIL_OPEN_WHEN_NEVER_SYNCED" Value="0" Secure="yes" />
+    <Property Id="EXCLUDE_STOCK_PROVIDER" Value="0" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="AtlasDir" Name="Atlas">
+        <Directory Id="INSTALLFOLDER" Name="LoginAgent" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AgentFiles" Directory="INSTALLFOLDER">
+      <!-- The COM class and the Credential Providers entry are registered together with the DLL. -->
+      <Component Id="ProviderDll" Bitness="always64">
+        <File Id="ProviderDllFile" Source="$(var.BinDir)\atlas_credential_provider.dll" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\CLSID\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}" Type="string" Value="Atlas Login Agent" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\CLSID\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}\InprocServer32" Type="string" Value="[#ProviderDllFile]" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\CLSID\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}\InprocServer32" Name="ThreadingModel" Type="string" Value="Apartment" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}" Type="string" Value="Atlas Login Agent" />
+      </Component>
+      <Component Id="EnrollExe" Bitness="always64">
+        <File Id="EnrollExeFile" Source="$(var.BinDir)\atlas-enroll.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="SyncExe" Bitness="always64">
+        <File Id="SyncExeFile" Source="$(var.BinDir)\atlas-sync.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="SupportFiles" Bitness="always64">
+        <File Id="SyncTaskXml" Source="atlas-sync-task.xml" KeyPath="yes" />
+        <File Id="ConfigTemplate" Source="config.template.json" />
+      </Component>
+      <!-- Present so admins can find it; NeverOverwrite keeps a value they set during an incident across repairs. -->
+      <Component Id="KillSwitch" Bitness="always64" NeverOverwrite="yes">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Atlas\LoginAgent" Name="Disabled" Type="integer" Value="0" KeyPath="yes" />
+      </Component>
+      <Component Id="ExcludeStock" Bitness="always64" Condition="EXCLUDE_STOCK_PROVIDER = &quot;1&quot;">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Microsoft\Windows\System" Name="ExcludedCredentialProviders" Type="string" Value="{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Atlas Login Agent" Level="1">
+      <ComponentGroupRef Id="AgentFiles" />
+    </Feature>
+
+    <!-- config.json from the MSI properties (left alone if this PC is already enrolled) -->
+    <CustomAction Id="WriteConfig" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[INSTALLFOLDER]atlas-enroll.exe&quot; --write-config --instance-url &quot;[INSTANCE_URL]&quot; --publishable-key &quot;[PUBLISHABLE_KEY]&quot; --instance-id &quot;[INSTANCE_ID]&quot;" />
+    <CustomAction Id="WriteConfigFailOpen" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[INSTALLFOLDER]atlas-enroll.exe&quot; --write-config --fail-open --instance-url &quot;[INSTANCE_URL]&quot; --publishable-key &quot;[PUBLISHABLE_KEY]&quot; --instance-id &quot;[INSTANCE_ID]&quot;" />
+    <CustomAction Id="CreateSyncTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;Atlas\LoginAgentSync&quot; /XML &quot;[INSTALLFOLDER]atlas-sync-task.xml&quot; /F" />
+    <CustomAction Id="DeleteSyncTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;Atlas\LoginAgentSync&quot; /F" />
+
+    <InstallExecuteSequence>
+      <Custom Action="WriteConfig" After="InstallFiles" Condition="NOT Installed AND INSTANCE_URL &lt;&gt; &quot;&quot; AND FAIL_OPEN_WHEN_NEVER_SYNCED &lt;&gt; &quot;1&quot;" />
+      <Custom Action="WriteConfigFailOpen" After="InstallFiles" Condition="NOT Installed AND INSTANCE_URL &lt;&gt; &quot;&quot; AND FAIL_OPEN_WHEN_NEVER_SYNCED = &quot;1&quot;" />
+      <Custom Action="CreateSyncTask" After="WriteConfigFailOpen" Condition="NOT Installed" />
+      <!-- Uninstall: drop the task first; the registry entries are removed with their components, which unregisters the provider. -->
+      <Custom Action="DeleteSyncTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

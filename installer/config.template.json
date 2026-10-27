@@ -1,0 +1,9 @@
+{
+  "instance_url": "https://auth.example.com",
+  "publishable_key": "pk_live_REPLACE_ME",
+  "instance_id": "ins_REPLACE_ME",
+  "device_id": "",
+  "device_key_id": "",
+  "enrolled": false,
+  "fail_open_when_never_synced": false
+}

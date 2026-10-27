@@ -1,0 +1,5 @@
+Windows Registry Editor Version 5.00
+
+; Atlas step OFF: the provider becomes a pure pass-through to the stock password provider.
+[HKEY_LOCAL_MACHINE\SOFTWARE\Atlas\LoginAgent]
+"Disabled"=dword:00000001

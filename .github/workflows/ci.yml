@@ -1,0 +1,122 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev
+            echo "OPENSSL_HINT=" >> "$GITHUB_ENV"
+          else
+            brew install openssl@3 ninja
+            echo "OPENSSL_HINT=-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          fi
+      - name: Configure (portable core only)
+        run: cmake -S . -B build -G Ninja -DATLAS_BUILD_PROVIDER=OFF -DCMAKE_BUILD_TYPE=Release $OPENSSL_HINT
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: windows (msvc x64)
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+      - name: Prepare cache dir
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+      - name: Configure (vcpkg manifest)
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          cmake --preset windows-msvc-x64
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset windows-msvc-x64
+      - name: Test
+        shell: pwsh
+        run: ctest --preset windows-msvc-x64 --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: |
+            build/windows-msvc-x64/src/provider/Release/*.dll
+            build/windows-msvc-x64/src/provider/Release/*.exe
+
+  release:
+    name: release (msi)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [core, windows]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
+      SIGN_PFX_B64: ${{ secrets.ATLAS_SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.ATLAS_SIGN_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+      - name: Prepare cache dir
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 4.0.5
+      - name: Locate signtool
+        shell: pwsh
+        run: |
+          $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          Add-Content $env:GITHUB_PATH (Split-Path $st.FullName)
+      - name: Prepare signing material (only if the secrets exist)
+        shell: pwsh
+        run: |
+          if ($env:SIGN_PFX_B64) {
+            $pfx = Join-Path $env:RUNNER_TEMP "atlas-sign.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_B64))
+            Add-Content $env:GITHUB_ENV "ATLAS_SIGN_PFX=$pfx"
+            Add-Content $env:GITHUB_ENV "ATLAS_SIGN_PFX_PASSWORD=$env:SIGN_PFX_PASSWORD"
+            Write-Host "Signing enabled"
+          } else {
+            Write-Host "No signing secrets: the MSI will be built unsigned"
+          }
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          ./installer/build.ps1 -Version $version
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: if ($env:ATLAS_SIGN_PFX) { Remove-Item -Force $env:ATLAS_SIGN_PFX -ErrorAction SilentlyContinue }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/installer/*.msi

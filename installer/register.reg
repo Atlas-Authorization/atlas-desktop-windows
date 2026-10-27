@@ -1,0 +1,14 @@
+Windows Registry Editor Version 5.00
+
+; Manual registration (the MSI does this for you). Adjust the DLL path if you installed elsewhere.
+; Equivalent: regsvr32 "C:\Program Files\Atlas\LoginAgent\atlas_credential_provider.dll"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}]
+@="Atlas Login Agent"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}\InprocServer32]
+@="C:\\Program Files\\Atlas\\LoginAgent\\atlas_credential_provider.dll"
+"ThreadingModel"="Apartment"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}]
+@="Atlas Login Agent"
