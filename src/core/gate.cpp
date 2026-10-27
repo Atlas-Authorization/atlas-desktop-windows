@@ -116,7 +116,7 @@ StepResult LoginGate::startPasskey(json& optionsOut) {
 StepResult LoginGate::completePasskey(const std::optional<json>& assertion) {
   if (challengeId_.empty() || challengeFactor_ != "passkey") return {Step::Failed, "no_challenge"};
   if (!assertion) { challengeId_.clear(); return {Step::Failed, "cancelled"}; }
-  StepResult r = finishVerify(client_.verify(challengeId_, std::nullopt, *assertion));
+  StepResult r = finishVerify(client_.verify(challengeId_, std::nullopt, assertion));
   // A rejected assertion spent its WebAuthn challenge: the next attempt starts a new one.
   if (r.step == Step::WrongCode) { challengeId_.clear(); return {Step::Failed, "passkey_rejected"}; }
   return r;
