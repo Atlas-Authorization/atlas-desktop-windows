@@ -12,6 +12,7 @@ json Config::toJson() const {
   return {{"instance_url", instanceUrl}, {"publishable_key", publishableKey}, {"instance_id", instanceId},
           {"device_id", deviceId}, {"device_key_id", deviceKeyId}, {"seal_key_id", sealKeyId}, {"enrolled", enrolled},
           {"fail_open_when_never_synced", failOpenWhenNeverSynced}, {"fail_closed_hide", failClosedHide},
+          {"hide_windows_hello", hideWindowsHello},
           {"break_glass_accounts", breakGlassAccounts}};
 }
 
@@ -36,7 +37,8 @@ ConfigParse parseConfig(const std::string& text) {
   if (!str("instance_url", true, c.instanceUrl) || !str("publishable_key", true, c.publishableKey) ||
       !str("instance_id", true, c.instanceId) || !str("device_id", false, c.deviceId) ||
       !str("device_key_id", false, c.deviceKeyId) || !str("seal_key_id", false, c.sealKeyId) || !boolean("enrolled", c.enrolled) ||
-      !boolean("fail_open_when_never_synced", c.failOpenWhenNeverSynced) || !boolean("fail_closed_hide", c.failClosedHide))
+      !boolean("fail_open_when_never_synced", c.failOpenWhenNeverSynced) || !boolean("fail_closed_hide", c.failClosedHide) ||
+      !boolean("hide_windows_hello", c.hideWindowsHello))
     return r;
   if (j.contains("break_glass_accounts")) {
     if (!j["break_glass_accounts"].is_array()) { r.error = "break_glass_accounts must be an array"; return r; }

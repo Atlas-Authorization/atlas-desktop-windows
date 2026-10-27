@@ -675,10 +675,11 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     bool ours = false;
     for (DWORD i = 0; i < count; i++)
       if (clsids[i] == CLSID_AtlasCredentialProvider && allow[i]) ours = true;
-    if (!ours || !shouldHideStock()) return S_OK;
+    bool hideHello = false;
+    if (!ours || !shouldHideStock(&hideHello)) return S_OK;
     for (DWORD i = 0; i < count; i++) {
       wchar_t buf[64] = {};
-      if (StringFromGUID2(clsids[i], buf, 64) && atlas::isStockPasswordTypeProvider(win::toUtf8(buf))) allow[i] = FALSE;
+      if (StringFromGUID2(clsids[i], buf, 64) && atlas::isStockPasswordTypeProvider(win::toUtf8(buf), hideHello)) allow[i] = FALSE;
     }
     return S_OK;
   }
@@ -697,7 +698,7 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
   IFACEMETHODIMP SetUserArray(ICredentialProviderUserArray* users) override { return innerUsers_ ? innerUsers_->SetUserArray(users) : S_OK; }
 
  private:
-  static bool shouldHideStock() {
+  static bool shouldHideStock(bool* hideHello = nullptr) {
     // Hide only when an enrolled, healthy install says MFA is required (or the config asks to fail closed).
     std::shared_ptr<win::Agent> a;
     std::string why;
@@ -706,6 +707,7 @@ class AtlasProvider final : public ICredentialProvider, public ICredentialProvid
     in.killSwitch = false;
     in.enrolled = true;
     in.failClosedHide = a->cfg.failClosedHide;
+    if (hideHello) *hideHello = a->cfg.hideWindowsHello;
     atlas::SyncCache c = atlas::loadSyncCache(a->store);
     in.cacheKnown = c.known;
     in.cacheRequired = c.required;

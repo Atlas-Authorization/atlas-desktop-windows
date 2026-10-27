@@ -18,16 +18,18 @@ bool shouldHideStockProvider(const HideInputs& in) {
   return in.failClosedHide || in.offlineBundleValid;
 }
 
-bool isStockPasswordTypeProvider(const std::string& clsid) {
+bool isStockPasswordTypeProvider(const std::string& clsid, bool includeWindowsHello) {
   static const char* ids[] = {
       "{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}",  // password
       "{2135f72a-90b5-4ed3-a7f1-8bb705ac276a}",  // picture password
-      "{d6886603-9d3e-4db2-b1a1-00d83f2f8b8d}",  // PIN
+      "{cb82ea12-9f71-446d-89e1-8d0924e1256e}",  // PIN logon provider (password-equivalent)
+      // Windows Hello for Business (NGC, {d6886603-9d2f-4eb2-b667-1971041fa96b}) is device-bound
+      // two-factor already, so it stays visible; hide_windows_hello in the config hides it too.
   };
   std::string c = lower(clsid);
   for (const char* id : ids)
     if (c == id) return true;
-  return false;
+  return includeWindowsHello && c == "{d6886603-9d2f-4eb2-b667-1971041fa96b}";
 }
 
 bool isBreakGlass(const Config& cfg, const std::string& domain, const std::string& user, const std::string& machine) {

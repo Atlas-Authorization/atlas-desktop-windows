@@ -9,6 +9,7 @@ struct Config {
   bool enrolled = false;
   bool failOpenWhenNeverSynced = false;
   bool failClosedHide = false;                 // hide the stock tile even before the first sync
+  bool hideWindowsHello = false;               // also hide Windows Hello for Business (it is device-bound 2FA already)
   std::vector<std::string> breakGlassAccounts;  // local accounts that skip the Atlas step (audited)
 
   std::string baseUrl() const;  // instance_url without a trailing slash

@@ -369,6 +369,9 @@ TEST(Policy, HideStockRules) {
 
 TEST(Policy, StockProviderList) {
   EXPECT_TRUE(isStockPasswordTypeProvider("{60B78E88-EAD8-445C-9CFD-0B87F74EA6CD}"));
+  EXPECT_TRUE(isStockPasswordTypeProvider("{cb82ea12-9f71-446d-89e1-8d0924e1256e}"));   // PIN logon provider
+  EXPECT_FALSE(isStockPasswordTypeProvider("{D6886603-9D2F-4EB2-B667-1971041FA96B}"));  // Hello stays by default
+  EXPECT_TRUE(isStockPasswordTypeProvider("{D6886603-9D2F-4EB2-B667-1971041FA96B}", true));
   EXPECT_TRUE(isStockPasswordTypeProvider("{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}"));
   EXPECT_FALSE(isStockPasswordTypeProvider("{C3B1A0E6-6D1F-4B0E-9C57-2F1B7A9D4E58}"));  // ours is never hidden
   EXPECT_FALSE(isStockPasswordTypeProvider(""));

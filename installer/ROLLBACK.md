@@ -12,6 +12,7 @@ a different tile. Both are built so that an Atlas failure cannot lock an adminis
   loads cleanly, the Atlas provider is itself in the provider list for that sign-in, and the cached policy from the last
   good sync says MFA is required. With no cached state at all, stock stays visible unless the config has
   `"fail_closed_hide": true` (MSI: `FAIL_CLOSED_HIDE=1`) or a valid offline bundle is held.
+- The stock password, picture-password and PIN-logon tiles are hidden; Windows Hello for Business stays (it is device-bound two-factor already) unless `"hide_windows_hello": true`.
 - Only sign-in and unlock are filtered. UAC / CredUI and password change keep the stock tile.
 - Hello biometrics (face, fingerprint) and smart cards are not hidden: they are strong factors of their own.
 

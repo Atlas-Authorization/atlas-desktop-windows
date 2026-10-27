@@ -22,7 +22,7 @@ bool shouldHideStockProvider(const HideInputs& in);
 // Providers the filter hides (case-insensitive CLSID string with braces): password, picture password, PIN.
 // Never matches the Atlas provider itself. Hello face/fingerprint and smart cards are strong factors of their own
 // and are left alone.
-bool isStockPasswordTypeProvider(const std::string& clsid);
+bool isStockPasswordTypeProvider(const std::string& clsid, bool includeWindowsHello = false);
 
 // Break-glass local account (config break_glass_accounts). An entry without a backslash matches only a local
 // account (empty / "." / this machine as the domain); an entry "DOMAIN\name" must match exactly. Case-insensitive.
