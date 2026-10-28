@@ -62,7 +62,7 @@
       <Component Id="EnrollExe" Bitness="always64">
         <File Id="EnrollExeFile" Source="$(var.BinDir)\atlas-enroll.exe" KeyPath="yes" />
       </Component>
-      <Component Id="SyncExe" Bitness="always64">
+      <Component Guid="83D97771-EC84-4D55-B6A7-6CA2524EF6F8" Id="SyncExe" Bitness="always64">
         <File Id="PasskeyExeFile" Source="$(var.BinDir)\atlas-passkey.exe" />
         <File Id="SyncExeFile" Source="$(var.BinDir)\atlas-sync.exe" KeyPath="yes" />
       </Component>
@@ -73,11 +73,11 @@
                         Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Arguments="service" />
         <ServiceControl Id="CliMfaServiceControl" Name="AtlasCliMfa" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
-      <Component Id="SsoBrokerExe" Bitness="always64">
+      <Component Guid="0961E0FF-6356-46FE-8C33-28FE4467A54B" Id="SsoBrokerExe" Bitness="always64">
         <File Id="SsoBrokerExeFile" Source="$(var.BinDir)\atlas-sso-broker.exe" KeyPath="yes" />
         <File Id="SsoNativeHostFile" Source="$(var.BinDir)\atlas-sso-native-host.exe" />
       </Component>
-      <Component Id="SsoSupportFiles" Bitness="always64">
+      <Component Guid="33C26C62-68EC-4669-AE75-09AF95F63442" Id="SsoSupportFiles" Bitness="always64">
         <File Id="SsoLogonTaskXml" Source="atlas-sso-logon-task.xml" KeyPath="yes" />
         <File Id="SsoRefreshTaskXml" Source="atlas-sso-refresh-task.xml" />
         <File Id="EnableSshdScript" Source="enable-sshd-mfa.ps1" />
@@ -85,7 +85,7 @@
         <File Id="ExtManifest" Source="..\browser-extension\manifest.json" />
         <File Id="ExtBackground" Source="..\browser-extension\background.js" />
       </Component>
-      <Component Id="SupportFiles" Bitness="always64">
+      <Component Guid="C3C4DC26-78B6-4953-8641-851E303FAB0C" Id="SupportFiles" Bitness="always64">
         <File Id="SyncTaskXml" Source="atlas-sync-task.xml" KeyPath="yes" />
         <File Id="ConfigTemplate" Source="config.template.json" />
         <File Id="BreakGlassScript" Source="create-break-glass.ps1" />
@@ -97,7 +97,7 @@
     </ComponentGroup>
 
     <ComponentGroup Id="ModuleFiles" Directory="MODULEDIR">
-      <Component Id="AtlasMfaModule" Bitness="always64">
+      <Component Guid="47E7DD88-E180-4414-BDD8-81A490C84CEB" Id="AtlasMfaModule" Bitness="always64">
         <File Id="AtlasMfaPsd1" Source="AtlasMfa\AtlasMfa.psd1" KeyPath="yes" />
         <File Id="AtlasMfaPsm1" Source="AtlasMfa\AtlasMfa.psm1" />
       </Component>
