@@ -99,6 +99,7 @@ bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
     CloseHandle(tok);
   }
   RevertToSelf();
+  std::fprintf(stderr, "cli_pipe: identify tok=%d ok=%d user=%s\n", tok ? 1 : 0, ok ? 1 : 0, who.user.c_str());
   return ok;
 }
 
