@@ -1,6 +1,7 @@
 #include "atlas/devicesso.hpp"
 
 #include "crypto_internal.hpp"
+#include "atlas/client.hpp"
 
 #include <cctype>
 
