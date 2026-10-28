@@ -69,7 +69,16 @@ bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
   if (!ImpersonateNamedPipeClient(pipe)) { std::fprintf(stderr, "cli_pipe: impersonate failed (%lu)\n", GetLastError()); return false; }
   HANDLE tok = nullptr;
   bool ok = false;
-  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok) && !OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &tok)) std::fprintf(stderr, "cli_pipe: OpenThreadToken failed (%lu)\n", GetLastError());
+  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok)) {
+    std::fprintf(stderr, "cli_pipe: OpenThreadToken failed (%lu)\n", GetLastError());
+    // A non-SYSTEM server (a test run, a console service) may not open the impersonation token: ask for the caller's process
+    // token by the pipe's kernel-reported client pid instead.
+    ULONG pid = 0;
+    if (GetNamedPipeClientProcessId(pipe, &pid)) {
+      HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+      if (proc) { OpenProcessToken(proc, TOKEN_QUERY, &tok); CloseHandle(proc); }
+    }
+  }
   if (tok) {
     DWORD n = 0;
     GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
