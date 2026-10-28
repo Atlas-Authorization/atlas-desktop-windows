@@ -81,13 +81,15 @@ bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
   }
   if (tok) {
     DWORD n = 0;
-    GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
+    BOOL r1 = GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
+    std::fprintf(stderr, "cli_pipe: step1 r=%d n=%lu err=%lu\n", (int)r1, n, GetLastError());
     std::vector<unsigned char> buf(n);
     if (!n || !GetTokenInformation(tok, TokenUser, buf.data(), n, &n)) std::fprintf(stderr, "cli_pipe: GetTokenInformation failed (%lu)\n", GetLastError());
     else {
       wchar_t name[256] = {}, dom[256] = {};
       DWORD nl = 256, dl = 256;
       SID_NAME_USE use;
+      std::fprintf(stderr, "cli_pipe: step2 reached\n");
       if (!LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nl, dom, &dl, &use)) std::fprintf(stderr, "cli_pipe: LookupAccountSid failed (%lu)\n", GetLastError());
       else {
         who.user = toUtf8(name);
