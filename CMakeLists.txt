@@ -30,7 +30,7 @@ endif()
 
 add_library(atlas_core STATIC
   src/core/base.cpp src/core/crypto.cpp src/core/softkey.cpp src/core/offline.cpp
-  src/core/config.cpp src/core/policy.cpp src/core/client.cpp src/core/gate.cpp src/core/passkey.cpp)
+  src/core/config.cpp src/core/policy.cpp src/core/client.cpp src/core/gate.cpp src/core/passkey.cpp src/core/devicesso.cpp src/core/cli.cpp)
 target_include_directories(atlas_core PUBLIC include)
 target_link_libraries(atlas_core PUBLIC nlohmann_json::nlohmann_json PRIVATE OpenSSL::Crypto)
 if(MSVC)
@@ -49,12 +49,12 @@ if(ATLAS_BUILD_TESTS)
     set(INSTALL_GTEST OFF CACHE INTERNAL "")
     FetchContent_MakeAvailable(googletest)
   endif()
-  add_executable(atlas_core_tests tests/core_tests.cpp tests/flow_tests.cpp tests/passkey_tests.cpp)
+  add_executable(atlas_core_tests tests/core_tests.cpp tests/flow_tests.cpp tests/passkey_tests.cpp tests/devicesso_tests.cpp tests/sso_flow_tests.cpp)
   target_link_libraries(atlas_core_tests PRIVATE atlas_core GTest::gtest_main OpenSSL::Crypto)
   target_compile_definitions(atlas_core_tests PRIVATE
     ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")
   include(GoogleTest)
-  gtest_discover_tests(atlas_core_tests DISCOVERY_MODE PRE_TEST)
+  gtest_discover_tests(atlas_core_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
 endif()
 
 if(ATLAS_BUILD_PROVIDER)
@@ -64,10 +64,10 @@ if(ATLAS_BUILD_PROVIDER)
   add_subdirectory(src/provider)
   if(ATLAS_BUILD_TESTS)
     # Real-CNG tests: byte order of the ECDH secret and the server's sealed bundle through the CNG path.
-    add_executable(atlas_windows_tests tests/windows/ncrypt_ecdh_test.cpp tests/windows/provider_guid_test.cpp)
+    add_executable(atlas_windows_tests tests/windows/ncrypt_ecdh_test.cpp tests/windows/provider_guid_test.cpp tests/windows/sso_keys_test.cpp tests/windows/cli_pipe_test.cpp)
     target_link_libraries(atlas_windows_tests PRIVATE atlas_win GTest::gtest_main OpenSSL::Crypto)
     target_compile_definitions(atlas_windows_tests PRIVATE
       ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")
-    gtest_discover_tests(atlas_windows_tests DISCOVERY_MODE PRE_TEST)
+    gtest_discover_tests(atlas_windows_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
   endif()
 endif()

@@ -8,6 +8,7 @@ class WinHttpClient : public atlas::IHttpClient {
  public:
   atlas::HttpResponse post(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
                            const std::string& body) override;
+  atlas::HttpResponse get(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers) override;
 };
 
 }  // namespace win

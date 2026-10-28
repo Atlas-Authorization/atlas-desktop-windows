@@ -20,6 +20,7 @@ std::string toString(const Bytes& b);
 
 std::string b64uEncode(const Bytes& b);
 std::string b64uEncode(const std::string& s);
+std::string b64Encode(const Bytes& b);  // standard alphabet, padded (Apple's `kid`)
 // Unpadded base64url only; padding, whitespace and foreign characters are rejected.
 std::optional<Bytes> b64uDecode(const std::string& s);
 std::optional<Bytes> base32Decode(const std::string& s);
@@ -30,7 +31,11 @@ bool ctEqual(const std::string& a, const std::string& b);
 Bytes sha256(const Bytes& data);
 Bytes hmac(const char* digest /* "SHA256" | "SHA1" */, const Bytes& key, const Bytes& data);
 Bytes hkdfSha256(const Bytes& ikm, const Bytes& salt, const Bytes& info, size_t len);
-bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const Bytes& tag, Bytes& out);
+bool aes256GcmDecrypt(const Bytes& key, const Bytes& iv, const Bytes& ct, const Bytes& tag, Bytes& out, const Bytes& aad = {});
+// ct || nothing; the 16-byte tag is returned separately. Empty `out` on failure.
+bool aes256GcmEncrypt(const Bytes& key, const Bytes& iv, const Bytes& pt, Bytes& ct, Bytes& tag, const Bytes& aad = {});
+// RSASSA-PKCS1-v1_5 with SHA-256 over `message`; n and e are big-endian magnitudes (JWK `n`, `e`).
+bool rsaVerifyPkcs1Sha256(const Bytes& n, const Bytes& e, const Bytes& message, const Bytes& signature);
 std::optional<Bytes> scryptDerive(const std::string& pass, const Bytes& salt, uint64_t N, uint64_t r, uint64_t p, size_t len);
 Bytes randomBytes(size_t n);
 // jwk: { kty:"EC", crv:"P-256", x, y }. Signature is IEEE P1363 (r||s, 64 bytes).
@@ -62,6 +67,8 @@ struct IHttpClient {
   virtual ~IHttpClient() = default;
   virtual HttpResponse post(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
                             const std::string& body) = 0;
+  // GET for the few read-only calls (SSO configuration, JWKS). Default: unsupported, reported as a transport failure.
+  virtual HttpResponse get(const std::string& /*url*/, const std::vector<std::pair<std::string, std::string>>& /*headers*/) { return {}; }
 };
 
 struct ISecretStore {

@@ -13,6 +13,7 @@ jobs:
   core:
     name: core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +39,7 @@ jobs:
   windows:
     name: windows (msvc x64)
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-cache
     steps:
@@ -62,13 +64,69 @@ jobs:
         run: cmake --build --preset windows-msvc-x64
       - name: Test
         shell: pwsh
-        run: ctest --preset windows-msvc-x64 --output-on-failure
+        run: ctest --preset windows-msvc-x64 --output-on-failure --timeout 120
       - name: Real-CNG tests (ECDH byte order, sealed bundle through CNG)
         shell: pwsh
         run: ctest --preset windows-msvc-x64 -R CngEcdh --output-on-failure -V
       - name: Provider GUIDs and WebAuthn platform check (log)
         shell: pwsh
         run: ctest --preset windows-msvc-x64 -R "WindowsProviders|WindowsWebAuthn" --output-on-failure -V
+      - name: Command-line MFA smoke (service in a console, real named pipe)
+        shell: pwsh
+        run: |
+          $bin = (Resolve-Path build/windows-msvc-x64/src/provider/Release).Path
+          $svc = Start-Process "$bin\atlas-cli-mfa.exe" -ArgumentList serve -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          # No config: stock behaviour, allowed.
+          & "$bin\atlas-cli-mfa.exe" check --service ci
+          if ($LASTEXITCODE -ne 0) { throw "expected allow without a config, got $LASTEXITCODE" }
+          # ssh-wrap runs the client's command after the factor and passes its exit code on.
+          $env:SSH_ORIGINAL_COMMAND = 'exit 7'
+          & "$bin\atlas-cli-mfa.exe" ssh-wrap
+          if ($LASTEXITCODE -ne 7) { throw "ssh-wrap should return the command's exit code, got $LASTEXITCODE" }
+          # Enrolled config whose device key is missing: broken install, refused, and the command must NOT run.
+          $dir = Join-Path $env:ProgramData 'Atlas'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Set-Content -Path (Join-Path $dir 'config.json') -Value '{"instance_url":"https://auth.example.com","publishable_key":"pk","instance_id":"ins_1","device_id":"ddv_x","device_key_id":"missing-key","enrolled":true}'
+          $ran = Join-Path $env:TEMP 'atlas-ran.txt'
+          Remove-Item $ran -ErrorAction SilentlyContinue
+          $env:SSH_ORIGINAL_COMMAND = 'echo x > "%TEMP%\atlas-ran.txt"'
+          & "$bin\atlas-cli-mfa.exe" ssh-wrap
+          if ($LASTEXITCODE -ne 1) { throw "a broken install must refuse (1), got $LASTEXITCODE" }
+          if (Test-Path $ran) { throw "the command ran although the factor was refused" }
+          # Service gone: fail closed.
+          Stop-Process -Id $svc.Id -Force
+          Start-Sleep 1
+          & "$bin\atlas-cli-mfa.exe" check
+          if ($LASTEXITCODE -ne 2) { throw "no service must refuse (2), got $LASTEXITCODE" }
+          Remove-Item (Join-Path $dir 'config.json') -Force
+          exit 0  # every check above throws on failure; pwsh would otherwise exit with the last native command's code (2 here, by design)
+
+      - name: Installer and scripts (WiX build, task XML, PowerShell parse, module import)
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          $bin = (Resolve-Path build/windows-msvc-x64/src/provider/Release).Path
+          $msi = Join-Path $PWD 'build/AtlasLoginAgent-ci.msi'
+          Push-Location installer   # Package.wxs names its files relative to the installer folder
+          wix build Package.wxs -arch x64 -d Version=0.2.0 -d "BinDir=$bin" -o $msi
+          $rc = $LASTEXITCODE
+          Pop-Location
+          if ($rc) { throw "wix build failed" }
+          foreach ($f in Get-ChildItem installer -Include *.ps1,*.psm1 -Recurse) {
+            $e = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e)
+            if ($e) { $e | Out-Host; throw "PowerShell parse error in $($f.Name)" }
+          }
+          Import-Module ./installer/AtlasMfa/AtlasMfa.psd1 -Force
+          if ((Get-Command -Module AtlasMfa).Count -ne 2) { throw "AtlasMfa should export two commands" }
+          Get-Content browser-extension/manifest.json -Raw | ConvertFrom-Json | Out-Null
+          foreach ($t in 'logon', 'refresh') {
+            schtasks /Create /TN "AtlasCiCheck\$t" /XML "installer/atlas-sso-$t-task.xml" /F
+            if ($LASTEXITCODE) { throw "task XML for $t was rejected by Task Scheduler" }
+            schtasks /Delete /TN "AtlasCiCheck\$t" /F | Out-Null
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
@@ -78,6 +136,7 @@ jobs:
 
   release:
     name: release (msi)
+    timeout-minutes: 60
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [core, windows]
     runs-on: windows-latest

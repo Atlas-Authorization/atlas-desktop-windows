@@ -67,6 +67,12 @@ int wmain(int argc, wchar_t** argv) {
     auto check = atlas::parseConfig(c.toJson().dump());
     if (!check.config) { std::fprintf(stderr, "config error: %s\n", check.error.c_str()); return 2; }
     if (!win::writeConfigFile(c)) { std::fprintf(stderr, "could not write the config file\n"); return 6; }
+    // The SSO broker runs as the signed-in user and may not read the protected config; this copy holds no secret (the publishable key is public).
+    atlas::json pub = {{"instance_url", url}, {"publishable_key", pk}, {"instance_id", iid}};
+    std::string pubText = pub.dump(2);
+    if (!win::ensurePublicReadDir(win::publicDir()) ||
+        !win::writeFileAtomic(win::ssoConfigPath(), std::vector<unsigned char>(pubText.begin(), pubText.end())))
+      std::fprintf(stderr, "warning: could not write the public SSO settings\n");
     std::printf("config written\n");
     return 0;
   }

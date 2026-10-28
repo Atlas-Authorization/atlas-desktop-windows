@@ -9,33 +9,41 @@ using atlas::Bytes;
 
 namespace {
 const wchar_t* kProviders[] = {MS_PLATFORM_CRYPTO_PROVIDER, MS_KEY_STORAGE_PROVIDER};
-const DWORD kMachine = NCRYPT_MACHINE_KEY_FLAG;
+DWORD scopeFlag(KeyScope s) { return s == KeyScope::Machine ? NCRYPT_MACHINE_KEY_FLAG : 0; }
 }  // namespace
 
-std::unique_ptr<CngDeviceKey> CngDeviceKey::open(const std::wstring& name) {
+std::unique_ptr<CngDeviceKey> CngDeviceKey::open(const std::wstring& name, KeyScope scope) {
   for (const wchar_t* prov : kProviders) {
     NCRYPT_PROV_HANDLE p = 0;
     if (NCryptOpenStorageProvider(&p, prov, 0) != ERROR_SUCCESS) continue;
     NCRYPT_KEY_HANDLE k = 0;
-    if (NCryptOpenKey(p, &k, name.c_str(), 0, kMachine) == ERROR_SUCCESS)
+    if (NCryptOpenKey(p, &k, name.c_str(), 0, scopeFlag(scope)) == ERROR_SUCCESS)
       return std::unique_ptr<CngDeviceKey>(new CngDeviceKey(p, k));
     NCryptFreeObject(p);
   }
   return nullptr;
 }
 
-std::unique_ptr<CngDeviceKey> CngDeviceKey::create(const std::wstring& name, KeyKind kind, bool& hardware, std::string& err) {
+std::unique_ptr<CngDeviceKey> CngDeviceKey::create(const std::wstring& name, KeyKind kind, bool& hardware, std::string& err,
+                                                   KeyScope scope, bool presence) {
   hardware = false;
   for (const wchar_t* prov : kProviders) {
     NCRYPT_PROV_HANDLE p = 0;
     if (NCryptOpenStorageProvider(&p, prov, 0) != ERROR_SUCCESS) continue;
     NCRYPT_KEY_HANDLE k = 0;
     SECURITY_STATUS st = NCryptCreatePersistedKey(p, &k, kind == KeyKind::Signing ? BCRYPT_ECDSA_P256_ALGORITHM : BCRYPT_ECDH_P256_ALGORITHM, name.c_str(), 0,
-                                                  kMachine | NCRYPT_OVERWRITE_KEY_FLAG);
+                                                  scopeFlag(scope) | NCRYPT_OVERWRITE_KEY_FLAG);
     if (st == ERROR_SUCCESS) {
       DWORD usage = kind == KeyKind::Signing ? NCRYPT_ALLOW_SIGNING_FLAG : NCRYPT_ALLOW_KEY_AGREEMENT_FLAG;
       st = NCryptSetProperty(k, NCRYPT_KEY_USAGE_PROPERTY, reinterpret_cast<PBYTE>(&usage), sizeof usage,
                              NCRYPT_PERSIST_FLAG);
+      if (st == ERROR_SUCCESS && presence) {
+        // Asks Windows for consent on every use of the key. Providers that cannot (the TPM one on some builds) refuse here and
+        // the next provider is tried: a presence key that cannot ask for presence is not created.
+        NCRYPT_UI_POLICY pol{1, NCRYPT_UI_PROTECT_KEY_FLAG, L"Atlas device sign-in", L"Atlas device sign-in key",
+                             L"Confirm it is you to sign in to your Atlas account on this device."};
+        st = NCryptSetProperty(k, NCRYPT_UI_POLICY_PROPERTY, reinterpret_cast<PBYTE>(&pol), sizeof pol, NCRYPT_PERSIST_FLAG);
+      }
       if (st == ERROR_SUCCESS) st = NCryptFinalizeKey(k, 0);
       if (st == ERROR_SUCCESS) {
         hardware = std::wstring(prov) == MS_PLATFORM_CRYPTO_PROVIDER;

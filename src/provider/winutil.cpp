@@ -77,6 +77,78 @@ bool writeFileAtomic(const std::wstring& path, const std::vector<unsigned char>&
   return ok;
 }
 
+std::wstring userDataDir() {
+  PWSTR p = nullptr;
+  std::wstring base;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p)) && p) base = p;
+  CoTaskMemFree(p);
+  return base.empty() ? base : base + L"\\Atlas\\sso";
+}
+
+std::wstring publicDir() {
+  PWSTR p = nullptr;
+  std::wstring base = L"C:\\ProgramData";
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &p)) && p) base = p;
+  CoTaskMemFree(p);
+  return base + L"\\Atlas-Public";
+}
+
+std::wstring ssoConfigPath() { return publicDir() + L"\\sso.json"; }
+
+bool ensurePublicReadDir(const std::wstring& path) {
+  SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  // SYSTEM and Administrators full control, Users read only: the file holds no secret but must not be user-writable.
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GR;;;BU)", SDDL_REVISION_1, &sd, nullptr))
+    return false;
+  sa.lpSecurityDescriptor = sd;
+  BOOL ok = CreateDirectoryW(path.c_str(), &sa) || GetLastError() == ERROR_ALREADY_EXISTS;
+  LocalFree(sd);
+  return ok != FALSE;
+}
+
+bool ensureUserDir(const std::wstring& path) {
+  if (path.empty()) return false;
+  int r = SHCreateDirectoryExW(nullptr, path.c_str(), nullptr);
+  return r == ERROR_SUCCESS || r == ERROR_ALREADY_EXISTS || r == ERROR_FILE_EXISTS;
+}
+
+std::wstring currentUserName() {
+  wchar_t b[256] = {};
+  DWORD n = 256;
+  return GetUserNameW(b, &n) ? std::wstring(b) : std::wstring();
+}
+
+std::wstring currentUserDomain() {
+  wchar_t b[256] = {};
+  DWORD n = 256;
+  return GetEnvironmentVariableW(L"USERDOMAIN", b, n) ? std::wstring(b) : std::wstring();
+}
+
+std::wstring computerName() {
+  wchar_t b[MAX_COMPUTERNAME_LENGTH + 1] = {};
+  DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
+  return GetComputerNameW(b, &n) ? std::wstring(b) : std::wstring();
+}
+
+bool readConsoleLine(const char* label, bool echo, std::string& out) {
+  HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+  DWORD mode = 0;
+  if (in == INVALID_HANDLE_VALUE || !GetConsoleMode(in, &mode)) return false;  // piped input: nobody to ask
+  HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+  auto say = [&](const std::string& t) { DWORD w = 0; WriteFile(err, t.data(), static_cast<DWORD>(t.size()), &w, nullptr); };
+  say(label);
+  if (!echo) SetConsoleMode(in, mode & ~static_cast<DWORD>(ENABLE_ECHO_INPUT));
+  std::string s;
+  char c = 0;
+  DWORD got = 0;
+  while (s.size() < 256 && ReadFile(in, &c, 1, &got, nullptr) && got == 1 && c != '\n') if (c != '\r') s += c;
+  SetConsoleMode(in, mode);
+  if (!echo) say("\r\n");
+  out = s;
+  return true;
+}
+
 bool killSwitchOn() {
   DWORD v = 0, sz = sizeof v;
   if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Atlas\\LoginAgent", L"Disabled", RRF_RT_REG_DWORD, nullptr, &v, &sz) ==
