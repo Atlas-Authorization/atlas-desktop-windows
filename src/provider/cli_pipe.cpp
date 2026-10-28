@@ -66,18 +66,21 @@ bool PipeLine::writeLine(const std::string& line) {
 
 namespace {
 bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
-  if (!ImpersonateNamedPipeClient(pipe)) return false;
+  if (!ImpersonateNamedPipeClient(pipe)) { std::fprintf(stderr, "cli_pipe: impersonate failed (%lu)\n", GetLastError()); return false; }
   HANDLE tok = nullptr;
   bool ok = false;
-  if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok)) {
+  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok) && !OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &tok)) std::fprintf(stderr, "cli_pipe: OpenThreadToken failed (%lu)\n", GetLastError());
+  if (tok) {
     DWORD n = 0;
     GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
     std::vector<unsigned char> buf(n);
-    if (n && GetTokenInformation(tok, TokenUser, buf.data(), n, &n)) {
+    if (!n || !GetTokenInformation(tok, TokenUser, buf.data(), n, &n)) std::fprintf(stderr, "cli_pipe: GetTokenInformation failed (%lu)\n", GetLastError());
+    else {
       wchar_t name[256] = {}, dom[256] = {};
       DWORD nl = 256, dl = 256;
       SID_NAME_USE use;
-      if (LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nl, dom, &dl, &use)) {
+      if (!LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nl, dom, &dl, &use)) std::fprintf(stderr, "cli_pipe: LookupAccountSid failed (%lu)\n", GetLastError());
+      else {
         who.user = toUtf8(name);
         who.domain = toUtf8(dom);
         who.machine = toUtf8(computerName());
