@@ -5,7 +5,6 @@
 #include <sddl.h>
 
 #include <atomic>
-#include <cstdio>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -66,52 +65,36 @@ bool PipeLine::writeLine(const std::string& line) {
 
 namespace {
 bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
-  if (!ImpersonateNamedPipeClient(pipe)) { std::fprintf(stderr, "cli_pipe: impersonate failed (%lu)\n", GetLastError()); return false; }
+  if (!ImpersonateNamedPipeClient(pipe)) return false;
   HANDLE tok = nullptr;
-  bool ok = false;
-  if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok)) {
-    std::fprintf(stderr, "cli_pipe: OpenThreadToken failed (%lu)\n", GetLastError());
-    // A non-SYSTEM server (a test run, a console service) may not open the impersonation token: ask for the caller's process
-    // token by the pipe's kernel-reported client pid instead.
-    ULONG pid = 0;
-    if (GetNamedPipeClientProcessId(pipe, &pid)) {
-      HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-      if (proc) { OpenProcessToken(proc, TOKEN_QUERY, &tok); CloseHandle(proc); }
-    }
-  }
-  if (tok) {
+  std::vector<unsigned char> buf;
+  if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &tok)) {
     DWORD n = 0;
-    BOOL r1 = GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
-    std::fprintf(stderr, "cli_pipe: step1 r=%d n=%lu err=%lu\n", (int)r1, n, GetLastError());
-    std::vector<unsigned char> buf(n);
-    if (!n || !GetTokenInformation(tok, TokenUser, buf.data(), n, &n)) std::fprintf(stderr, "cli_pipe: GetTokenInformation failed (%lu)\n", GetLastError());
-    else {
-      wchar_t name[256] = {}, dom[256] = {};
-      DWORD nl = 256, dl = 256;
-      SID_NAME_USE use;
-      std::fprintf(stderr, "cli_pipe: step2 reached\n");
-      if (!LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nl, dom, &dl, &use)) std::fprintf(stderr, "cli_pipe: LookupAccountSid failed (%lu)\n", GetLastError());
-      else {
-        who.user = toUtf8(name);
-        who.domain = toUtf8(dom);
-        who.machine = toUtf8(computerName());
-        ok = true;
-      }
-    }
+    GetTokenInformation(tok, TokenUser, nullptr, 0, &n);
+    buf.resize(n);
+    if (!n || !GetTokenInformation(tok, TokenUser, buf.data(), n, &n)) buf.clear();
     CloseHandle(tok);
   }
+  // Back to ourselves before the account lookup: that is an RPC to the LSA, which an identification-level token cannot make.
   RevertToSelf();
-  std::fprintf(stderr, "cli_pipe: identify tok=%d ok=%d user=%s\n", tok ? 1 : 0, ok ? 1 : 0, who.user.c_str());
-  return ok;
+  if (buf.empty()) return false;
+  wchar_t name[256] = {}, dom[256] = {};
+  DWORD nl = 256, dl = 256;
+  SID_NAME_USE use;
+  if (!LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nl, dom, &dl, &use)) return false;
+  who.user = toUtf8(name);
+  who.domain = toUtf8(dom);
+  who.machine = toUtf8(computerName());
+  return true;
 }
 
 void serveOne(HANDLE pipe, const HandlerFactory& factory) {
   PipeLine line(pipe);  // takes ownership of the handle
   // ImpersonateNamedPipeClient only works once the server has read from the pipe, so the first line comes before identify().
   std::string in;
-  if (!line.readLine(in, 180000)) { std::fprintf(stderr, "cli_pipe: first read failed (%lu)\n", GetLastError()); return; }
+  if (!line.readLine(in, 180000)) return;
   atlas::CliSession::Who who;
-  if (!identify(pipe, who)) { std::fprintf(stderr, "cli_pipe: identify failed (%lu)\n", GetLastError()); return; }
+  if (!identify(pipe, who)) return;
   LineHandler handler = factory(who);
   bool alive = true;
   for (bool first = true; alive; first = false) {
