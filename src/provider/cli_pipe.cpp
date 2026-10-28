@@ -91,13 +91,15 @@ bool identify(HANDLE pipe, atlas::CliSession::Who& who) {
 
 void serveOne(HANDLE pipe, const HandlerFactory& factory) {
   PipeLine line(pipe);  // takes ownership of the handle
+  // ImpersonateNamedPipeClient only works once the server has read from the pipe, so the first line comes before identify().
+  std::string in;
+  if (!line.readLine(in, 180000)) return;
   atlas::CliSession::Who who;
   if (!identify(pipe, who)) return;
   LineHandler handler = factory(who);
   bool alive = true;
-  while (alive) {
-    std::string in;
-    if (!line.readLine(in, 180000)) break;  // idle, closed or garbage: the session ends and nothing was allowed
+  for (bool first = true; alive; first = false) {
+    if (!first && !line.readLine(in, 180000)) break;  // idle, closed or garbage: the session ends and nothing was allowed
     bool write_ok = true;
     alive = handler(in, [&](const std::string& o) { write_ok = write_ok && line.writeLine(o); });
     if (!write_ok) break;
