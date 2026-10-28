@@ -107,8 +107,12 @@ jobs:
         run: |
           dotnet tool install --global wix --version 4.0.5
           $bin = (Resolve-Path build/windows-msvc-x64/src/provider/Release).Path
-          wix build installer/Package.wxs -arch x64 -d Version=0.2.0 -d "BinDir=$bin" -o build/AtlasLoginAgent-ci.msi
-          if ($LASTEXITCODE) { throw "wix build failed" }
+          $msi = Join-Path $PWD 'build/AtlasLoginAgent-ci.msi'
+          Push-Location installer   # Package.wxs names its files relative to the installer folder
+          wix build Package.wxs -arch x64 -d Version=0.2.0 -d "BinDir=$bin" -o $msi
+          $rc = $LASTEXITCODE
+          Pop-Location
+          if ($rc) { throw "wix build failed" }
           foreach ($f in Get-ChildItem installer -Include *.ps1,*.psm1 -Recurse) {
             $e = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e)
