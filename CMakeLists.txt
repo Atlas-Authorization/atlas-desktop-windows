@@ -54,7 +54,7 @@ if(ATLAS_BUILD_TESTS)
   target_compile_definitions(atlas_core_tests PRIVATE
     ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")
   include(GoogleTest)
-  gtest_discover_tests(atlas_core_tests DISCOVERY_MODE PRE_TEST)
+  gtest_discover_tests(atlas_core_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
 endif()
 
 if(ATLAS_BUILD_PROVIDER)
@@ -68,6 +68,6 @@ if(ATLAS_BUILD_PROVIDER)
     target_link_libraries(atlas_windows_tests PRIVATE atlas_win GTest::gtest_main OpenSSL::Crypto)
     target_compile_definitions(atlas_windows_tests PRIVATE
       ATLAS_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/testdata/protocol-vectors.json")
-    gtest_discover_tests(atlas_windows_tests DISCOVERY_MODE PRE_TEST)
+    gtest_discover_tests(atlas_windows_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
   endif()
 endif()

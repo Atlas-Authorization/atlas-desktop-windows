@@ -2,6 +2,8 @@
 // Nothing here signs with a presence key: that would raise a consent dialog nobody can answer on a runner.
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include "../fixture.hpp"
 #include "atlas/devicesso.hpp"
 #include "winkey.hpp"
@@ -54,6 +56,8 @@ TEST(SsoKeys, JweSealedToACngEncryptionKeyOpens) {
 }
 
 TEST(SsoKeys, PresenceKeyIsCreatedOnlyWhereTheProviderCanAskForPresence) {
+  // Finalizing a UI-protected key can raise a consent dialog nobody can answer on a runner (it hung CI for hours): opt in only.
+  if (!std::getenv("ATLAS_TEST_INTERACTIVE")) GTEST_SKIP() << "set ATLAS_TEST_INTERACTIVE=1 on a desktop session to run";
   Temp t(L"AtlasSsoTest-user", win::KeyKind::Signing, true);
   ASSERT_TRUE(t.key) << t.err;
   std::printf("presence key provider: %s\n", t.hardware ? "TPM" : "software key store");
