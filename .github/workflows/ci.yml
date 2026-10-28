@@ -100,6 +100,7 @@ jobs:
           & "$bin\atlas-cli-mfa.exe" check
           if ($LASTEXITCODE -ne 2) { throw "no service must refuse (2), got $LASTEXITCODE" }
           Remove-Item (Join-Path $dir 'config.json') -Force
+          exit 0  # every check above throws on failure; pwsh would otherwise exit with the last native command's code (2 here, by design)
 
       - name: Installer and scripts (WiX build, task XML, PowerShell parse, module import)
         shell: pwsh
