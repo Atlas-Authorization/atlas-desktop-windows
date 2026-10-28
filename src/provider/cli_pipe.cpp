@@ -5,6 +5,7 @@
 #include <sddl.h>
 
 #include <atomic>
+#include <cstdio>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -93,9 +94,9 @@ void serveOne(HANDLE pipe, const HandlerFactory& factory) {
   PipeLine line(pipe);  // takes ownership of the handle
   // ImpersonateNamedPipeClient only works once the server has read from the pipe, so the first line comes before identify().
   std::string in;
-  if (!line.readLine(in, 180000)) return;
+  if (!line.readLine(in, 180000)) { std::fprintf(stderr, "cli_pipe: first read failed (%lu)\n", GetLastError()); return; }
   atlas::CliSession::Who who;
-  if (!identify(pipe, who)) return;
+  if (!identify(pipe, who)) { std::fprintf(stderr, "cli_pipe: identify failed (%lu)\n", GetLastError()); return; }
   LineHandler handler = factory(who);
   bool alive = true;
   for (bool first = true; alive; first = false) {

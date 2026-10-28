@@ -38,7 +38,8 @@ TEST(CliPipe, ServiceIdentifiesTheCallerFromThePipeAndAnswersLines) {
   win::PipeLine line(h);
   ASSERT_TRUE(line.writeLine("PING"));
   std::string r;
-  ASSERT_TRUE(line.readLine(r, 5000));
+  bool got = line.readLine(r, 5000);
+  ASSERT_TRUE(got) << "client read error " << GetLastError();
   EXPECT_EQ(r, "PONG");
   EXPECT_EQ(win::toUtf8(win::currentUserName()), s.seenUser);
   EXPECT_FALSE(s.seenMachine.empty());
